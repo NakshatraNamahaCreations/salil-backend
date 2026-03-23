@@ -40,6 +40,9 @@ router.get('/books/:bookId/purchase-status', authenticateReader, bookPurchaseCtr
 // ─── Chapter Unlock Status (Authenticated) ────────────────────
 router.get('/books/:bookId/chapter-status', authenticateReader, readerController.getChapterUnlockStatus);
 
+// ─── PDF Stream Proxy (Authenticated — accepts token via header or query param) ──
+router.get('/books/:bookId/chapters/:chapterId/pdf', authenticateReader, readerController.streamChapterPdf);
+
 // ─── Reviews (Authenticated) ──────────────────────────────────
 router.get('/books/:bookId/review', authenticateReader, readerController.getMyBookReview);
 router.post('/books/:bookId/review', authenticateReader, readerController.submitBookReview);

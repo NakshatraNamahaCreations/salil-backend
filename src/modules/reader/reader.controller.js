@@ -15,6 +15,7 @@ const Review = require('../reviews/Review.model');
 const Wallet = require('../wallet/Wallet.model');
 const AppError = require('../../common/AppError');
 const { asyncHandler } = require('../../common/errorHandler');
+const { streamPdfFromS3 } = require('../../common/signedUrl');
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -759,6 +760,14 @@ const getChapterUnlockStatus = asyncHandler(async (req, res) => {
 
   const UnlockTransaction = require('../wallet/UnlockTransaction.model');
 
+  // Check if user purchased this book
+  const purchase = await BookPurchase.findOne({
+    userId: userDoc._id,
+    bookId,
+    status: 'completed',
+  }).lean();
+  const hasBookPurchase = !!purchase;
+
   // Check if user has an active premium plan
   const hasActivePlan =
     userDoc.isPremium === true &&
@@ -776,7 +785,7 @@ const getChapterUnlockStatus = asyncHandler(async (req, res) => {
   const result = chapters.map((ch) => {
     const isFree = ch.isFree === true;
     const isCoinUnlocked = unlockedSet.has(ch._id.toString());
-    const isUnlocked = isFree || hasActivePlan || isCoinUnlocked;
+    const isUnlocked = isFree || hasBookPurchase || hasActivePlan || isCoinUnlocked;
 
     return {
       id: ch._id.toString(),
@@ -788,6 +797,8 @@ const getChapterUnlockStatus = asyncHandler(async (req, res) => {
       is_unlocked: isUnlocked,
       access_reason: isFree
         ? 'free'
+        : hasBookPurchase
+        ? 'purchased'
         : hasActivePlan
         ? 'subscription'
         : isCoinUnlocked
@@ -904,6 +915,52 @@ const submitBookReview = asyncHandler(async (req, res) => {
   res.json({ success: true, data: review });
 });
 
+/**
+ * GET /api/v1/reader/books/:bookId/chapters/:chapterId/pdf
+ * Streams the PDF from S3 through the backend — the S3 URL never reaches the client.
+ * Accepts auth via Authorization header OR ?token= query param (for WebView/iframe).
+ */
+const streamChapterPdf = asyncHandler(async (req, res) => {
+  const { bookId, chapterId } = req.params;
+  const userDoc = req.user;
+
+  const chapter = await Chapter.findOne({ _id: chapterId, bookId });
+  if (!chapter) throw AppError.notFound('Chapter not found');
+  if (!chapter.rawPdfUrl) throw AppError.notFound('No PDF content for this chapter');
+
+  // ── Check unlock status (same logic as chapter.service.getChapterContent) ──
+  let hasAccess = chapter.isFree;
+
+  if (!hasAccess && userDoc) {
+    // Book purchased?
+    const purchase = await BookPurchase.findOne({
+      userId: userDoc._id, bookId, status: 'completed',
+    }).lean();
+    if (purchase) hasAccess = true;
+
+    // Premium subscription?
+    if (!hasAccess) {
+      const hasActivePlan = userDoc.isPremium === true &&
+        (!userDoc.premiumExpiresAt || new Date(userDoc.premiumExpiresAt) > new Date());
+      if (hasActivePlan) hasAccess = true;
+    }
+
+    // Coin unlock?
+    if (!hasAccess) {
+      const UnlockTransaction = require('../wallet/UnlockTransaction.model');
+      const unlock = await UnlockTransaction.findOne({
+        userId: userDoc._id, contentType: 'chapter', contentId: chapterId,
+      });
+      if (unlock) hasAccess = true;
+    }
+  }
+
+  if (!hasAccess) throw AppError.forbidden('You do not have access to this chapter');
+
+  // Stream PDF from S3 → client (S3 URL never exposed, supports Range requests)
+  await streamPdfFromS3(chapter.rawPdfUrl, req, res);
+});
+
 module.exports = {
   getProfile,
   updateProfile,
@@ -928,4 +985,5 @@ module.exports = {
   getMyReferrals,
   getMyBookReview,
   submitBookReview,
+  streamChapterPdf,
 };

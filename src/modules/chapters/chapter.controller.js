@@ -1,21 +1,12 @@
 const chapterService = require('./chapter.service');
 const { asyncHandler } = require('../../common/errorHandler');
 const { success, created } = require('../../common/response');
-const pdfParse = require('pdf-parse');
 
-// Helper function to extract and format PDF content
+// Helper: if a PDF was uploaded to S3, set rawPdfUrl and sourceType
 const processPdfIfPresent = async (req) => {
-  if (req.file && req.file.mimetype === 'application/pdf') {
-    const pdfData = await pdfParse(req.file.buffer);
-    const text = pdfData.text;
-    const htmlText = text
-      .split('\n\n')
-      .map((p) => {
-        const trimmed = p.trim();
-        return trimmed ? `<p>${trimmed.replace(/\n/g, '<br/>')}</p>` : '';
-      })
-      .join('');
-    req.body.contentHtml = htmlText;
+  if (req.file && req.file.location) {
+    req.body.rawPdfUrl = req.file.location; // S3 URL
+    req.body.sourceType = 'pdf';
   }
 };
 

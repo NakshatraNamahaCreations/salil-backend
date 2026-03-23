@@ -58,22 +58,29 @@ const authorize = (...roles) => {
 const authenticateReader = async (req, _res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    let token;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query.token) {
+      // Accept token via query param (for iframe/WebView PDF streaming)
+      token = req.query.token;
+    }
+
+    if (!token) {
       throw AppError.unauthorized('Access token required');
     }
 
-    const token = authHeader.split(' ')[1];
-    console.log("token",token)
     const decoded = jwt.verify(token, config.jwt.accessSecret);
 
     if (decoded.role !== 'reader') {
       throw AppError.forbidden('Reader access only');
     }
 
-    console.log("decoded.userId",decoded.userId)
+
     const user = await User.findById(decoded.userId).select('-passwordHash');
 
-    console.log("user",user)
+
     if (!user) {
       throw AppError.unauthorized('User not found');
     }

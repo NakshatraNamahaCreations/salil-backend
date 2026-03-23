@@ -1,6 +1,7 @@
 const Chapter = require('./Chapter.model');
 const Book = require('../books/Book.model');
 const AppError = require('../../common/AppError');
+const { streamPdfFromS3 } = require('../../common/signedUrl');
 
 /**
  * Create a chapter for a book
@@ -39,7 +40,7 @@ const createChapter = async (bookId, data) => {
 const getChaptersByBook = async (bookId, includeContent = false) => {
   const selectFields = includeContent
     ? ''
-    : '-contentHtml -rawPdfUrl';
+    : '-contentHtml -rawPdfUrl -signedPdfUrl';
 
   const chapters = await Chapter.find({ bookId })
     .select(selectFields)
@@ -75,6 +76,7 @@ const getChapterContent = async (chapterId, userDoc = null) => {
       _id: chapter._id,
       title: chapter.title,
       orderNumber: chapter.orderNumber,
+      sourceType: chapter.sourceType,
       isFree: chapter.isFree,
       coinCost: chapter.coinCost,
       contentPreview: chapter.contentPreview,
@@ -84,26 +86,53 @@ const getChapterContent = async (chapterId, userDoc = null) => {
     isUnlocked: false,
   });
 
+  // Helper: build full response — never expose S3 URLs to the client
+  const fullResponse = (accessReason) => {
+    const chapterObj = chapter.toObject();
+
+    // Strip the raw S3 URL — PDF is served via the backend proxy endpoint
+    delete chapterObj.rawPdfUrl;
+    // Flag that this chapter has PDF content (so the client knows to use the proxy)
+    if (chapter.sourceType === 'pdf') {
+      chapterObj.hasPdfContent = true;
+    }
+
+    return { chapter: chapterObj, isUnlocked: true, accessReason };
+  };
+
   // ── 1. Free chapter — everyone can read ────────────────────
   if (chapter.isFree) {
     await Chapter.findByIdAndUpdate(chapterId, { $inc: { readCount: 1 } });
-    return { chapter, isUnlocked: true, accessReason: 'free' };
+    return fullResponse('free');
   }
 
   // ── 2. No user (anonymous) — locked ────────────────────────
   if (!userDoc) return lockedResponse();
 
-  // ── 3. Active premium subscription — full access ───────────
+  // ── 3. Book purchased — full access to all chapters ──────
+  const BookPurchase = require('../payments/BookPurchase.model');
+  const purchase = await BookPurchase.findOne({
+    userId: userDoc._id,
+    bookId: chapter.bookId,
+    status: 'completed',
+  });
+
+  if (purchase) {
+    await Chapter.findByIdAndUpdate(chapterId, { $inc: { readCount: 1 } });
+    return fullResponse('purchased');
+  }
+
+  // ── 4. Active premium subscription — full access ───────────
   const hasActivePlan =
     userDoc.isPremium === true &&
     (!userDoc.premiumExpiresAt || new Date(userDoc.premiumExpiresAt) > new Date());
 
   if (hasActivePlan) {
     await Chapter.findByIdAndUpdate(chapterId, { $inc: { readCount: 1 } });
-    return { chapter, isUnlocked: true, accessReason: 'subscription' };
+    return fullResponse('subscription');
   }
 
-  // ── 4. Coin-unlock transaction exists ─────────────────────
+  // ── 5. Coin-unlock transaction exists ─────────────────────
   const UnlockTransaction = require('../wallet/UnlockTransaction.model');
   const unlock = await UnlockTransaction.findOne({
     userId: userDoc._id,
@@ -113,10 +142,10 @@ const getChapterContent = async (chapterId, userDoc = null) => {
 
   if (unlock) {
     await Chapter.findByIdAndUpdate(chapterId, { $inc: { readCount: 1 } });
-    return { chapter, isUnlocked: true, accessReason: 'coins' };
+    return fullResponse('coins');
   }
 
-  // ── 5. Not accessible — return preview only ────────────────
+  // ── 6. Not accessible — return preview only ────────────────
   return lockedResponse();
 };
 
