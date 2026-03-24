@@ -2,14 +2,16 @@ const express = require('express');
 const chapterController = require('./chapter.controller');
 const validate = require('../../common/validate');
 const { createChapterSchema, updateChapterSchema, reorderSchema, publishSchema } = require('./chapter.validators');
-const { authenticate, authorize, optionalAuth } = require('../../common/auth.middleware');
+const { authenticate, authorize, optionalAuth, authenticateReader } = require('../../common/auth.middleware');
 const uploadPdf = require('../../common/uploadPdf');
+const uploadZip = require('../../common/uploadZip');
 
 // ─── Admin Chapter Routes (/api/v1/admin/books/:bookId/chapters) ──
 const adminRouter = express.Router({ mergeParams: true });
 
 adminRouter.use(authenticate, authorize('admin', 'superadmin'));
 
+adminRouter.post('/bulk-zip', uploadZip.single('zipFile'), chapterController.adminBulkZipUploadChapters);
 adminRouter.post('/', uploadPdf.single('pdfFile'), validate(createChapterSchema), chapterController.adminCreateChapter);
 adminRouter.get('/', chapterController.adminGetChapters);
 
@@ -38,6 +40,8 @@ authorChapterRouter.put('/:id', uploadPdf.single('pdfFile'), validate(updateChap
 // ─── Reader Chapter Routes (/api/v1/reader/books/:bookId/chapters) ──
 const readerRouter = express.Router({ mergeParams: true });
 
+readerRouter.get('/:chapterId/pdf-url', authenticateReader, chapterController.readerGetChapterPdfUrl);
+readerRouter.get('/:chapterId/pdf', authenticateReader, chapterController.readerGetChapterPdf);
 readerRouter.get('/:chapterId', optionalAuth, chapterController.readerGetChapterContent);
 
 module.exports = { adminRouter, adminChapterRouter, authorRouter, authorChapterRouter, readerRouter };

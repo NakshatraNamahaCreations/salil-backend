@@ -1,4 +1,5 @@
 const { S3Client, GetObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const config = require('../config');
 
 const s3Client = new S3Client({
@@ -102,5 +103,26 @@ const streamPdfFromS3 = async (s3Url, req, res) => {
   }
 };
 
-module.exports = { extractS3Key, streamPdfFromS3 };
+/**
+ * Generate a short-lived presigned S3 URL for a PDF.
+ * The client (mobile WebView / pdf.js) fetches directly from S3 — no backend proxy hop.
+ * @param {string} s3Url - The permanent S3 URL stored in DB
+ * @param {number} expiresIn - Seconds until the URL expires (default: from config)
+ */
+const getPresignedPdfUrl = async (s3Url, expiresIn) => {
+  const key = extractS3Key(s3Url);
+  if (!key) throw new Error('Invalid S3 URL');
+
+  const ttl = expiresIn || config.aws.signedUrlExpiry || 900;
+  const cmd = new GetObjectCommand({
+    Bucket: config.aws.s3Bucket,
+    Key: key,
+    ResponseContentType: 'application/pdf',
+    ResponseContentDisposition: 'inline',
+  });
+
+  return getSignedUrl(s3Client, cmd, { expiresIn: ttl });
+};
+
+module.exports = { extractS3Key, streamPdfFromS3, getPresignedPdfUrl };
 
