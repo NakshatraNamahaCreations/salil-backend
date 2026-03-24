@@ -33,6 +33,7 @@ const adminPaymentRoutes = require('./modules/payments/admin.payments.routes');
 const adminCouponRoutes = require('./modules/coupons/coupon.routes');
 const adminReferralRoutes = require('./modules/referrals/referral.routes');
 const readerRoutes = require('./modules/reader/reader.routes');
+const readerCouponRoutes = require('./modules/coupons/reader.coupon.routes');
 
 const app = express();
 
@@ -137,6 +138,7 @@ app.use('/api/v1/reader/books/:bookId/chapters', readerChapterRoutes);
 app.use('/api/v1/reader/wallet', readerWalletRoutes);
 app.use('/api/v1/reader/podcasts', readerPodcastRoutes);
 app.use('/api/v1/reader/videos', readerVideoRoutes);
+app.use('/api/v1/reader/coupons', readerCouponRoutes);
 
 // ─── 404 Handler ─────────────────────────────────────────────
 app.all('*', (req, res, next) => {

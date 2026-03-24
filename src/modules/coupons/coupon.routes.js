@@ -7,6 +7,7 @@ router.use(authenticate, authorize('admin', 'superadmin'));
 
 router.get('/', ctrl.getCoupons);
 router.post('/', ctrl.createCoupon);
+router.get('/:id/usages', ctrl.getCouponUsages);
 router.put('/:id', ctrl.updateCoupon);
 router.patch('/:id/toggle', ctrl.toggleCoupon);
 router.delete('/:id', ctrl.deleteCoupon);

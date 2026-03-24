@@ -6,6 +6,7 @@ const { asyncHandler } = require('../../common/errorHandler');
 const Book = require('../books/Book.model');
 const BookPurchase = require('./BookPurchase.model');
 const Payment = require('./Payment.model');
+const Coupon = require('../coupons/Coupon.model');
 
 /**
  * POST /api/v1/reader/books/:bookId/purchase
@@ -14,7 +15,7 @@ const Payment = require('./Payment.model');
 const createOrder = asyncHandler(async (req, res) => {
   const { bookId } = req.params;
 
-  const purchaseType = req.body.purchaseType || 'ebook';
+  const { purchaseType = 'ebook', couponCode } = req.body;
 
   const book = await Book.findById(bookId).lean();
   if (!book) throw AppError.notFound('Book not found');
@@ -23,12 +24,12 @@ const createOrder = asyncHandler(async (req, res) => {
     throw AppError.badRequest('This content is free, no purchase needed');
   }
 
-  const price =
+  const originalPrice =
     purchaseType === 'audiobook' ? book.audiobookPrice :
     purchaseType === 'combo'     ? book.comboPrice :
     book.ebookPrice;
 
-  if (!price || price <= 0) {
+  if (!originalPrice || originalPrice <= 0) {
     throw AppError.badRequest('Price is not set. Please contact support.');
   }
 
@@ -46,11 +47,37 @@ const createOrder = asyncHandler(async (req, res) => {
     });
   }
 
+  // ── Apply coupon if provided ──────────────────────────────
+  let discountAmount = 0;
+  let appliedCoupon = null;
+  if (couponCode) {
+    const coupon = await Coupon.findOne({ code: couponCode.toUpperCase().trim() });
+    if (coupon && coupon.isActive) {
+      const now = new Date();
+      const validDate = (!coupon.validFrom || now >= new Date(coupon.validFrom)) &&
+                        (!coupon.validUntil || now <= new Date(coupon.validUntil));
+      const withinLimit = coupon.usageLimit === 0 || coupon.usedCount < coupon.usageLimit;
+      const meetsMin = coupon.minPurchaseAmount === 0 || originalPrice >= coupon.minPurchaseAmount;
+      const appliesToType = coupon.applicableTo === 'all' || coupon.applicableTo === purchaseType;
+
+      if (validDate && withinLimit && meetsMin && appliesToType) {
+        if (coupon.discountType === 'percentage') {
+          discountAmount = (originalPrice * coupon.discountValue) / 100;
+          if (coupon.maxDiscountAmount > 0) discountAmount = Math.min(discountAmount, coupon.maxDiscountAmount);
+        } else {
+          discountAmount = coupon.discountValue;
+        }
+        discountAmount = Math.min(Math.round(discountAmount * 100) / 100, originalPrice);
+        appliedCoupon = coupon;
+      }
+    }
+  }
+
+  const finalPrice = Math.max(originalPrice - discountAmount, 0);
+
   if (!config.razorpay.keyId || !config.razorpay.keySecret) {
     throw AppError.badRequest('Payment gateway not configured. Please contact support.');
   }
-
-  console.log('[purchase] creating Razorpay order, amount paise:', Math.round(book.ebookPrice * 100));
 
   const razorpay = new Razorpay({
     key_id: config.razorpay.keyId,
@@ -60,12 +87,13 @@ const createOrder = asyncHandler(async (req, res) => {
   let order;
   try {
     order = await razorpay.orders.create({
-      amount: Math.round(price * 100),
+      amount: Math.round(finalPrice * 100),
       currency: 'INR',
       receipt: `bk_${bookId.slice(-12)}_${Date.now().toString(36)}`,
       notes: {
         bookId: bookId.toString(),
         userId: req.userId.toString(),
+        ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
       },
     });
   } catch (rzpErr) {
@@ -75,10 +103,19 @@ const createOrder = asyncHandler(async (req, res) => {
     );
   }
 
-  // Upsert pending purchase record — avoid duplicates if user taps Buy multiple times
+  // Upsert pending purchase record
   await BookPurchase.findOneAndUpdate(
     { userId: req.userId, bookId, purchaseType, status: 'pending' },
-    { amountPaid: price, currency: 'INR', gatewayOrderId: order.id, gatewayPaymentId: '', gatewaySignature: '' },
+    {
+      amountPaid: finalPrice,
+      originalAmount: originalPrice,
+      discountAmount,
+      couponCode: appliedCoupon ? appliedCoupon.code : '',
+      currency: 'INR',
+      gatewayOrderId: order.id,
+      gatewayPaymentId: '',
+      gatewaySignature: '',
+    },
     { upsert: true, new: true }
   );
 
@@ -88,9 +125,13 @@ const createOrder = asyncHandler(async (req, res) => {
       order_id: order.id,
       amount: order.amount,
       currency: order.currency,
-      key_id: config.razorpay.keyId || 'rzp_test_YOUR_KEY',
+      key_id: config.razorpay.keyId,
       book_title: book.title,
       already_purchased: false,
+      original_amount: originalPrice,
+      discount_amount: discountAmount,
+      final_amount: finalPrice,
+      coupon_applied: !!appliedCoupon,
     },
   });
 });
@@ -126,6 +167,14 @@ const verifyPayment = asyncHandler(async (req, res) => {
 
   if (!purchase) {
     throw AppError.notFound('Purchase record not found');
+  }
+
+  // Increment coupon usage if one was applied
+  if (purchase.couponCode) {
+    await Coupon.findOneAndUpdate(
+      { code: purchase.couponCode },
+      { $inc: { usedCount: 1 } }
+    );
   }
 
   // Also record a Payment entry for audit trail

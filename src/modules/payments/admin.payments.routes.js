@@ -9,6 +9,7 @@ router.use(authorize('admin', 'superadmin'));
 router.get('/summary', paymentsController.getPaymentSummary);
 router.get('/', paymentsController.getPayments);
 router.get('/purchases', paymentsController.getPurchases);
+router.get('/book-purchases', paymentsController.getBookPurchases);
 router.get('/:id', paymentsController.getPaymentById);
 router.patch('/:id/status', paymentsController.updatePaymentStatus);
 

@@ -1,5 +1,6 @@
 const Payment = require('./Payment.model');
 const Purchase = require('./Purchase.model');
+const BookPurchase = require('./BookPurchase.model');
 const User = require('../users/User.model');
 const AppError = require('../../common/AppError');
 
@@ -24,14 +25,28 @@ exports.getPayments = async (req, res, next) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const [payments, total] = await Promise.all([
+    const [paymentsData, total] = await Promise.all([
       Payment.find(query)
         .populate('userId', 'name email')
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(parseInt(limit)),
+        .limit(parseInt(limit))
+        .lean(),
       Payment.countDocuments(query)
     ]);
+
+    const payments = await Promise.all(
+      paymentsData.map(async (payment) => {
+        let discountAmount = 0;
+        if (payment.gatewayOrderId) {
+          const bp = await BookPurchase.findOne({ gatewayOrderId: payment.gatewayOrderId }, 'discountAmount').lean();
+          if (bp && bp.discountAmount) {
+            discountAmount = bp.discountAmount;
+          }
+        }
+        return { ...payment, discountAmount };
+      })
+    );
 
     res.status(200).json({
       success: true,
@@ -128,6 +143,33 @@ exports.updatePaymentStatus = async (req, res, next) => {
     if (!payment) throw AppError.notFound('Payment not found');
 
     res.status(200).json({ success: true, data: payment, message: 'Payment status updated' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// GET /admin/payments/book-purchases — List all book purchases with coupon/discount info
+exports.getBookPurchases = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 20, status } = req.query;
+    const query = {};
+    if (status) query.status = status;
+
+    const [purchases, total] = await Promise.all([
+      BookPurchase.find(query)
+        .populate('userId', 'name email')
+        .populate('bookId', 'title')
+        .sort({ createdAt: -1 })
+        .skip((parseInt(page) - 1) * parseInt(limit))
+        .limit(parseInt(limit)),
+      BookPurchase.countDocuments(query)
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: purchases,
+      pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / parseInt(limit)) }
+    });
   } catch (error) {
     next(error);
   }

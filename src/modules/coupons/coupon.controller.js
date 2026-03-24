@@ -1,4 +1,5 @@
 const Coupon = require('./Coupon.model');
+const BookPurchase = require('../payments/BookPurchase.model');
 const AppError = require('../../common/AppError');
 const { asyncHandler } = require('../../common/errorHandler');
 const { success, created } = require('../../common/response');
@@ -96,4 +97,73 @@ const deleteCoupon = asyncHandler(async (req, res) => {
   success(res, null, 'Coupon deleted');
 });
 
-module.exports = { getCoupons, createCoupon, updateCoupon, toggleCoupon, deleteCoupon };
+// Admin: get all users who used a specific coupon
+const getCouponUsages = asyncHandler(async (req, res) => {
+  const coupon = await Coupon.findById(req.params.id).lean();
+  if (!coupon) throw AppError.notFound('Coupon not found');
+
+  const usages = await BookPurchase.find({ couponCode: coupon.code, status: 'completed' })
+    .populate('userId', 'name email')
+    .populate('bookId', 'title')
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return res.json({
+    success: true,
+    data: {
+      code: coupon.code,
+      usages: usages.map(u => ({
+        user: u.userId?.name || 'Unknown',
+        email: u.userId?.email || '',
+        book: u.bookId?.title || 'Unknown',
+        amountPaid: u.amountPaid,
+        originalAmount: u.originalAmount || u.amountPaid,
+        discountAmount: u.discountAmount || 0,
+        date: u.createdAt,
+      })),
+    },
+  });
+});
+
+// Reader-facing: validate a coupon before purchase (does NOT consume it)
+const validateCoupon = asyncHandler(async (req, res) => {
+  const { code, purchaseType = 'ebook', amount } = req.body;
+  if (!code || !amount) throw AppError.badRequest('code and amount are required');
+
+  const coupon = await Coupon.findOne({ code: code.toUpperCase().trim() });
+  if (!coupon || !coupon.isActive) throw AppError.badRequest('Invalid or inactive coupon code');
+
+  const now = new Date();
+  if (coupon.validFrom && now < new Date(coupon.validFrom)) throw AppError.badRequest('Coupon is not valid yet');
+  if (coupon.validUntil && now > new Date(coupon.validUntil)) throw AppError.badRequest('Coupon has expired');
+  if (coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) throw AppError.badRequest('Coupon usage limit reached');
+  if (coupon.minPurchaseAmount > 0 && amount < coupon.minPurchaseAmount)
+    throw AppError.badRequest(`Minimum purchase amount is ₹${coupon.minPurchaseAmount}`);
+  if (coupon.applicableTo !== 'all' && coupon.applicableTo !== purchaseType)
+    throw AppError.badRequest(`This coupon is only valid for ${coupon.applicableTo}`);
+
+  let discountAmount = 0;
+  if (coupon.discountType === 'percentage') {
+    discountAmount = (amount * coupon.discountValue) / 100;
+    if (coupon.maxDiscountAmount > 0) discountAmount = Math.min(discountAmount, coupon.maxDiscountAmount);
+  } else {
+    discountAmount = coupon.discountValue;
+  }
+  discountAmount = Math.min(Math.round(discountAmount * 100) / 100, amount);
+  const finalAmount = Math.round((amount - discountAmount) * 100) / 100;
+
+  return res.json({
+    success: true,
+    data: {
+      valid: true,
+      code: coupon.code,
+      description: coupon.description,
+      discountType: coupon.discountType,
+      discountValue: coupon.discountValue,
+      discountAmount,
+      finalAmount,
+    },
+  });
+});
+
+module.exports = { getCoupons, createCoupon, updateCoupon, toggleCoupon, deleteCoupon, validateCoupon, getCouponUsages };
