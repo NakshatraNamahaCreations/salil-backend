@@ -135,4 +135,107 @@ const togglePublish = asyncHandler(async (req, res) => {
   success(res, track, `Track ${track.status}`);
 });
 
-module.exports = { getAudiobooks, createAudiobook, getAudiobook, updateAudiobook, deleteAudiobook, togglePublish };
+/**
+ * POST /api/v1/admin/audiobooks/bulk-zip
+ * Body (multipart): bookId, zipFile
+ */
+const bulkZipUploadAudiobooks = asyncHandler(async (req, res) => {
+  const AppError = require('../../common/AppError');
+  if (!req.file) throw AppError.badRequest('ZIP file is required');
+
+  const { bookId } = req.body;
+  if (!bookId) throw AppError.badRequest('bookId is required');
+
+  const book = await Book.findById(bookId);
+  if (!book) throw AppError.notFound('Book not found');
+
+  const AdmZip = require('adm-zip');
+  const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+  const config = require('../../config');
+
+  const AUDIO_EXTS = ['.mp3', '.m4a', '.wav', '.aac', '.ogg', '.flac', '.opus', '.wma'];
+
+  const zip = new AdmZip(req.file.buffer);
+
+  const audioEntries = zip.getEntries()
+    .filter(entry =>
+      !entry.isDirectory &&
+      !entry.entryName.includes('__MACOSX') &&
+      AUDIO_EXTS.some(ext => entry.entryName.toLowerCase().endsWith(ext))
+    )
+    .sort((a, b) => {
+      const nameA = a.entryName.split('/').pop();
+      const nameB = b.entryName.split('/').pop();
+      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+  if (audioEntries.length === 0) {
+    throw AppError.badRequest('No audio files found in the ZIP');
+  }
+
+  const s3Client = new S3Client({
+    credentials: {
+      accessKeyId: config.aws.accessKeyId,
+      secretAccessKey: config.aws.secretAccessKey,
+    },
+    region: config.aws.region,
+  });
+
+  const lastTrack = await Audiobook.findOne({ bookId }).sort({ orderNumber: -1 });
+  let nextOrder = lastTrack ? lastTrack.orderNumber + 1 : 1;
+
+  const results = [];
+  const errors = [];
+
+  for (const entry of audioEntries) {
+    try {
+      const filename = entry.entryName.split('/').pop();
+      const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+      const title = filename.replace(/\.[^/.]+$/, '');
+      const audioBuffer = zip.readFile(entry);
+
+      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      const s3Key = `audio/${uniqueSuffix}${ext}`;
+
+      const mimeMap = {
+        '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav',
+        '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.flac': 'audio/flac',
+        '.opus': 'audio/opus', '.wma': 'audio/x-ms-wma',
+      };
+
+      await s3Client.send(new PutObjectCommand({
+        Bucket: config.aws.s3Bucket,
+        Key: s3Key,
+        Body: audioBuffer,
+        ContentType: mimeMap[ext] || 'audio/mpeg',
+      }));
+
+      const audioUrl = `https://${config.aws.s3Bucket}.s3.${config.aws.region}.amazonaws.com/${s3Key}`;
+
+      const track = await Audiobook.create({
+        bookId,
+        orderNumber: nextOrder++,
+        title,
+        audioUrl,
+        duration: 0,
+        narrator: '',
+        status: 'published',
+      });
+
+      results.push({ title, trackId: track._id });
+    } catch (err) {
+      errors.push({ file: entry.entryName, error: err.message });
+    }
+  }
+
+  await Book.findByIdAndUpdate(bookId, { $inc: { totalChapters: results.length } });
+
+  success(res, {
+    uploaded: results.length,
+    failed: errors.length,
+    tracks: results,
+    errors,
+  }, `${results.length} track(s) uploaded from ZIP`);
+});
+
+module.exports = { getAudiobooks, createAudiobook, getAudiobook, updateAudiobook, deleteAudiobook, togglePublish, bulkZipUploadAudiobooks };

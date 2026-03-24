@@ -30,7 +30,7 @@ const updateSeries = asyncHandler(async (req, res) => {
 
 const deleteSeries = asyncHandler(async (req, res) => {
   await podcastService.deleteSeries(req.params.id);
-  success(res, null, 'Podcast series archived');
+  success(res, null, 'Podcast series deleted');
 });
 
 // ─── Episode Controllers ─────────────────────────────────

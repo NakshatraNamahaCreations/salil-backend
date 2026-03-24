@@ -1,6 +1,11 @@
 const Review = require('./Review.model');
+const Book = require('../books/Book.model');
+const PodcastSeries = require('../podcasts/PodcastSeries.model');
+const VideoSeries = require('../videos/VideoSeries.model');
 const AppError = require('../../common/AppError');
 const logger = require('../../common/logger');
+
+const MODEL_MAP = { book: Book, podcast_series: PodcastSeries, video: VideoSeries };
 
 exports.getReviews = async (req, res, next) => {
   try {
@@ -10,18 +15,34 @@ exports.getReviews = async (req, res, next) => {
 
     const reviews = await Review.find(query)
       .populate('userId', 'name email')
-      .populate('contentId', 'title')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
 
     const total = await Review.countDocuments(query);
 
+    // Resolve content titles: group by contentType and batch-fetch titles
+    const idsByType = {};
+    reviews.forEach(r => {
+      if (!idsByType[r.contentType]) idsByType[r.contentType] = [];
+      idsByType[r.contentType].push(r.contentId);
+    });
+
+    const titleMap = {};
+    await Promise.all(
+      Object.entries(idsByType).map(async ([type, ids]) => {
+        const Model = MODEL_MAP[type];
+        if (!Model) return;
+        const docs = await Model.find({ _id: { $in: ids } }, 'title');
+        docs.forEach(d => { titleMap[d._id.toString()] = d.title; });
+      })
+    );
+
     const formatted = reviews.map(r => ({
       _id: r._id,
       user: r.userId?.name || r.userId?.email || 'Unknown',
       contentType: r.contentType,
-      contentTitle: r.contentId?.title || '',
+      contentTitle: titleMap[r.contentId?.toString()] || '',
       rating: r.rating,
       body: r.body,
       status: r.status,

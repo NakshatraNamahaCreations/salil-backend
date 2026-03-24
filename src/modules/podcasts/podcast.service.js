@@ -59,10 +59,9 @@ const updateSeries = async (id, data) => {
 const deleteSeries = async (id) => {
   const series = await PodcastSeries.findById(id);
   if (!series) throw AppError.notFound('Podcast series not found');
-  series.status = 'archived';
-  series.isPublished = false;
-  await series.save();
-  return series;
+  await PodcastEpisode.deleteMany({ seriesId: id });
+  await PodcastSeries.findByIdAndDelete(id);
+  return { deleted: true };
 };
 
 // ─── Episodes ────────────────────────────────────────────

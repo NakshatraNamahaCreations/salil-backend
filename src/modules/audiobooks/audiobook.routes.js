@@ -3,6 +3,7 @@ const router = express.Router();
 const audiobookController = require('./audiobook.controller');
 const { authenticate, authorize } = require('../../common/auth.middleware');
 const upload = require('../../common/upload');
+const uploadZip = require('../../common/uploadZip');
 const multer = require('multer');
 
 // Multer middleware that silently skips if no file is present (avoids S3 errors on edit-without-file)
@@ -20,6 +21,7 @@ const optionalAudioUpload = (req, res, next) => {
 router.use(authenticate, authorize('admin', 'superadmin'));
 
 router.get('/', audiobookController.getAudiobooks);
+router.post('/bulk-zip', uploadZip.single('zipFile'), audiobookController.bulkZipUploadAudiobooks);
 router.post('/', upload.single('audioFile'), audiobookController.createAudiobook);
 router.get('/:id', audiobookController.getAudiobook);
 router.put('/:id', optionalAudioUpload, audiobookController.updateAudiobook);
