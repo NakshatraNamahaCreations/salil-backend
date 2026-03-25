@@ -32,6 +32,7 @@ const adminAudiobookRoutes = require('./modules/audiobooks/audiobook.routes');
 const adminPaymentRoutes = require('./modules/payments/admin.payments.routes');
 const adminCouponRoutes = require('./modules/coupons/coupon.routes');
 const adminReferralRoutes = require('./modules/referrals/referral.routes');
+const adminUploadRoutes = require('./modules/admin/upload.routes');
 const readerRoutes = require('./modules/reader/reader.routes');
 const readerCouponRoutes = require('./modules/coupons/reader.coupon.routes');
 
@@ -125,6 +126,7 @@ app.use('/api/v1/admin/audiobooks', adminAudiobookRoutes);
 app.use('/api/v1/admin/payments', adminPaymentRoutes);
 app.use('/api/v1/admin/coupons', adminCouponRoutes);
 app.use('/api/v1/admin/referrals', adminReferralRoutes);
+app.use('/api/v1/admin/upload', adminUploadRoutes);
 
 // Author Routes
 app.use('/api/v1/author/books', authorBookRoutes);

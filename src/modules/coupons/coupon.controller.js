@@ -130,7 +130,7 @@ const validateCoupon = asyncHandler(async (req, res) => {
   const { code, purchaseType = 'ebook', amount } = req.body;
   if (!code || !amount) throw AppError.badRequest('code and amount are required');
 
-  const coupon = await Coupon.findOne({ code: code.toUpperCase().trim() });
+  const coupon = await Coupon.findOne({ code: code.trim() });
   if (!coupon || !coupon.isActive) throw AppError.badRequest('Invalid or inactive coupon code');
 
   const now = new Date();

@@ -1,4 +1,4 @@
-const { S3Client, GetObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, GetObjectCommand, HeadObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const config = require('../config');
 
@@ -8,6 +8,18 @@ const s3Client = new S3Client({
     secretAccessKey: config.aws.secretAccessKey,
   },
   region: config.aws.region,
+});
+
+// Separate client for browser-facing presigned upload URLs.
+// requestChecksumCalculation: 'WHEN_REQUIRED' prevents AWS SDK v3 from adding
+// x-amz-sdk-checksum-algorithm=CRC32 to the URL — browsers cannot compute CRC32.
+const s3UploadClient = new S3Client({
+  credentials: {
+    accessKeyId: config.aws.accessKeyId,
+    secretAccessKey: config.aws.secretAccessKey,
+  },
+  region: config.aws.region,
+  requestChecksumCalculation: 'WHEN_REQUIRED',
 });
 
 /**
@@ -124,5 +136,24 @@ const getPresignedPdfUrl = async (s3Url, expiresIn) => {
   return getSignedUrl(s3Client, cmd, { expiresIn: ttl });
 };
 
-module.exports = { extractS3Key, streamPdfFromS3, getPresignedPdfUrl };
+/**
+ * Generate a presigned S3 PUT URL so the admin panel can upload files directly to S3.
+ * The file never passes through the backend server.
+ * @param {string} key - S3 object key (e.g. 'pdfs/123.pdf')
+ * @param {string} contentType - MIME type of the file
+ * @returns {{ uploadUrl: string, fileUrl: string }}
+ */
+const getPresignedUploadUrl = async (key, contentType) => {
+  const cmd = new PutObjectCommand({
+    Bucket: config.aws.s3Bucket,
+    Key: key,
+    ContentType: contentType,
+  });
+  // Use s3UploadClient (no checksum) so the browser can PUT without CRC32 headers
+  const uploadUrl = await getSignedUrl(s3UploadClient, cmd, { expiresIn: 3600 });
+  const fileUrl = `https://${config.aws.s3Bucket}.s3.${config.aws.region}.amazonaws.com/${key}`;
+  return { uploadUrl, fileUrl };
+};
+
+module.exports = { extractS3Key, streamPdfFromS3, getPresignedPdfUrl, getPresignedUploadUrl };
 
