@@ -86,17 +86,12 @@ const getChapterContent = async (chapterId, userDoc = null) => {
     isUnlocked: false,
   });
 
-  // Helper: build full response — never expose S3 URLs to the client
+  // Helper: build full response — expose rawPdfUrl directly (public bucket)
   const fullResponse = (accessReason) => {
     const chapterObj = chapter.toObject();
-
-    // Strip the raw S3 URL — PDF is served via the backend proxy endpoint
-    delete chapterObj.rawPdfUrl;
-    // Flag that this chapter has PDF content (so the client knows to use the proxy)
     if (chapter.sourceType === 'pdf') {
       chapterObj.hasPdfContent = true;
     }
-
     return { chapter: chapterObj, isUnlocked: true, accessReason };
   };
 

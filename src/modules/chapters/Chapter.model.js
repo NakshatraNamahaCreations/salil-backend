@@ -35,6 +35,7 @@ const chapterSchema = new mongoose.Schema(
       default: 'none',
     },
     conversionError: { type: String, default: '' },
+    chapterImage: { type: String, default: '' },
   },
   { timestamps: true }
 );

@@ -57,7 +57,8 @@ const adminBulkZipUploadChapters = asyncHandler(async (req, res) => {
   const config = require('../../config');
   const Chapter = require('./Chapter.model');
 
-  const zip = new AdmZip(req.file.buffer);
+  const fs = require('fs');
+  const zip = new AdmZip(req.file.path);
 
   // Filter PDF files only, exclude macOS metadata folders, sort naturally
   const pdfEntries = zip.getEntries()
@@ -124,6 +125,9 @@ const adminBulkZipUploadChapters = asyncHandler(async (req, res) => {
     }
   }
 
+  // Clean up temp file
+  fs.unlink(req.file.path, () => {});
+
   success(res, {
     uploaded: results.length,
     failed: errors.length,
@@ -189,9 +193,8 @@ const readerGetChapterContent = asyncHandler(async (req, res) => {
   success(res, data);
 });
 
-// Return a short-lived presigned S3 URL — client fetches PDF directly from S3
+// Return the direct S3 URL — bucket objects are publicly readable
 const readerGetChapterPdfUrl = asyncHandler(async (req, res) => {
-  const { getPresignedPdfUrl } = require('../../common/signedUrl');
   const AppError = require('../../common/AppError');
   const Chapter = require('./Chapter.model');
 
@@ -231,8 +234,7 @@ const readerGetChapterPdfUrl = asyncHandler(async (req, res) => {
     }
   }
 
-  const url = await getPresignedPdfUrl(chapter.rawPdfUrl);
-  success(res, { url }, 'PDF URL generated');
+  success(res, { url: chapter.rawPdfUrl }, 'PDF URL');
 });
 
 // Stream PDF bytes for a chapter — accessed via ?token= (WebView / mobile)

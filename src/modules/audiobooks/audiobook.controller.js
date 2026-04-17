@@ -44,7 +44,7 @@ const getAudiobooks = asyncHandler(async (req, res) => {
  * Body: { bookId, title, audioUrl, duration, narrator, status }
  */
 const createAudiobook = asyncHandler(async (req, res) => {
-  const { bookId, title, duration, narrator, status, orderNumber } = req.body;
+  const { bookId, title, duration, narrator, status, orderNumber, chapterImage } = req.body;
 
   let audioUrl = req.body.audioUrl || '';
   if (req.file && req.file.location) {
@@ -63,6 +63,7 @@ const createAudiobook = asyncHandler(async (req, res) => {
     audioUrl,
     duration: Number(duration) || 0,
     narrator: narrator || '',
+    chapterImage: chapterImage || '',
     status: status || 'draft',
   });
 
@@ -88,13 +89,14 @@ const getAudiobook = asyncHandler(async (req, res) => {
  * PUT /api/v1/admin/audiobooks/:id
  */
 const updateAudiobook = asyncHandler(async (req, res) => {
-  const { title, duration, narrator, status, orderNumber } = req.body;
+  const { title, duration, narrator, status, orderNumber, chapterImage } = req.body;
   let audioUrl = req.body.audioUrl;
 
   if (req.file && req.file.location) {
     audioUrl = req.file.location;
   }
 
+  console.log("chapterImage",chapterImage)
   const track = await Audiobook.findByIdAndUpdate(
     req.params.id,
     {
@@ -102,6 +104,7 @@ const updateAudiobook = asyncHandler(async (req, res) => {
       ...(audioUrl !== undefined && { audioUrl }),
       ...(duration !== undefined && { duration: Number(duration) }),
       ...(narrator !== undefined && { narrator }),
+      ...(chapterImage !== undefined && { chapterImage }),
       ...(status !== undefined && { status }),
       ...(orderNumber !== undefined && { orderNumber: Number(orderNumber) }),
     },
@@ -155,7 +158,8 @@ const bulkZipUploadAudiobooks = asyncHandler(async (req, res) => {
 
   const AUDIO_EXTS = ['.mp3', '.m4a', '.wav', '.aac', '.ogg', '.flac', '.opus', '.wma'];
 
-  const zip = new AdmZip(req.file.buffer);
+  const fs = require('fs');
+  const zip = new AdmZip(req.file.path);
 
   const audioEntries = zip.getEntries()
     .filter(entry =>
@@ -227,6 +231,9 @@ const bulkZipUploadAudiobooks = asyncHandler(async (req, res) => {
       errors.push({ file: entry.entryName, error: err.message });
     }
   }
+
+  // Clean up temp file
+  fs.unlink(req.file.path, () => {});
 
   await Book.findByIdAndUpdate(bookId, { $inc: { totalChapters: results.length } });
 

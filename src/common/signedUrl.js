@@ -23,26 +23,29 @@ const s3UploadClient = new S3Client({
 });
 
 /**
- * Extract the S3 key from a full S3 URL.
- * Supports both path-style and virtual-hosted-style URLs:
- *   https://bucket.s3.region.amazonaws.com/pdfs/file.pdf  → pdfs/file.pdf
- *   https://s3.region.amazonaws.com/bucket/pdfs/file.pdf  → pdfs/file.pdf
+ * Extract the S3 bucket + key from a full S3 URL.
+ * Supports both path-style and virtual-hosted-style URLs.
  */
-const extractS3Key = (url) => {
+const extractS3Parts = (url) => {
   try {
     const parsed = new URL(url);
     // Virtual-hosted: bucket.s3.region.amazonaws.com/key
     if (parsed.hostname.includes('.s3.')) {
-      return decodeURIComponent(parsed.pathname.slice(1)); // remove leading /
+      const bucket = parsed.hostname.split('.s3.')[0];
+      const key = decodeURIComponent(parsed.pathname.slice(1));
+      return { bucket, key };
     }
     // Path-style: s3.region.amazonaws.com/bucket/key
     const parts = parsed.pathname.slice(1).split('/');
-    parts.shift(); // remove bucket name
-    return decodeURIComponent(parts.join('/'));
+    const bucket = parts.shift();
+    const key = decodeURIComponent(parts.join('/'));
+    return { bucket, key };
   } catch {
     return null;
   }
 };
+
+const extractS3Key = (url) => extractS3Parts(url)?.key || null;
 
 /**
  * Stream a PDF from S3 directly to an Express response.
@@ -52,10 +55,10 @@ const extractS3Key = (url) => {
  * @param {import('express').Response} res - Express response object
  */
 const streamPdfFromS3 = async (s3Url, req, res) => {
-  const key = extractS3Key(s3Url);
-  if (!key) throw new Error('Invalid S3 URL');
+  const parts = extractS3Parts(s3Url);
+  if (!parts) throw new Error('Invalid S3 URL');
+  const { bucket, key } = parts;
 
-  const bucket = config.aws.s3Bucket;
   const rangeHeader = req.headers.range;
 
   if (rangeHeader) {
@@ -122,12 +125,13 @@ const streamPdfFromS3 = async (s3Url, req, res) => {
  * @param {number} expiresIn - Seconds until the URL expires (default: from config)
  */
 const getPresignedPdfUrl = async (s3Url, expiresIn) => {
-  const key = extractS3Key(s3Url);
-  if (!key) throw new Error('Invalid S3 URL');
+  const parts = extractS3Parts(s3Url);
+  if (!parts) throw new Error('Invalid S3 URL');
+  const { bucket, key } = parts;
 
   const ttl = expiresIn || config.aws.signedUrlExpiry || 900;
   const cmd = new GetObjectCommand({
-    Bucket: config.aws.s3Bucket,
+    Bucket: bucket,
     Key: key,
     ResponseContentType: 'application/pdf',
     ResponseContentDisposition: 'inline',

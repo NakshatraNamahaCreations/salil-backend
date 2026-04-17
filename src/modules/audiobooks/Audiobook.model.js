@@ -16,6 +16,7 @@ const audiobookSchema = new mongoose.Schema(
     audioUrl: { type: String, default: '' }, // S3 key
     duration: { type: Number, default: 0 }, // seconds
     narrator: { type: String, default: '' },
+    chapterImage: { type: String, default: '' },
     listenCount: { type: Number, default: 0 },
     status: {
       type: String,

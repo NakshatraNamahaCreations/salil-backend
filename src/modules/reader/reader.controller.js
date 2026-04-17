@@ -480,7 +480,10 @@ const getAudiobookById = asyncHandler(async (req, res) => {
     throw AppError.notFound('Audiobook not found');
   }
 
-  const tracks = await Audiobook.find({ bookId: id, status: 'published' }).sort({ _id: 1 }).lean();
+  const tracks = await Audiobook.find({ bookId: id, status: 'published' })
+    .populate('chapterId', 'chapterImage')
+    .sort({ _id: 1 })
+    .lean();
 
   const totalDuration = tracks.reduce((sum, t) => sum + (t.duration || 0), 0);
   const narratorName = tracks.length > 0 ? tracks[0].narrator || '' : '';
@@ -500,6 +503,7 @@ const getAudiobookById = asyncHandler(async (req, res) => {
     duration: t.duration,
     audio_url: t.audioUrl || '',
     narrator: t.narrator || '',
+    chapter_image: t.chapterImage || t.chapterId?.chapterImage || '',
   }));
 
   res.json({ success: true, data: content });

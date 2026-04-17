@@ -24,6 +24,7 @@ const ALLOWED_MIME = [
   'application/pdf',
   'audio/mpeg', 'audio/mp3', 'audio/wav',
   'audio/ogg', 'audio/aac', 'audio/x-m4a', 'audio/mp4',
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml',
 ];
 
 // Multer-S3 streams the file directly from request → S3 (never fully buffered in Node)
@@ -34,16 +35,18 @@ const fileUpload = multer({
     contentType: multerS3.AUTO_CONTENT_TYPE,
     key: (req, file, cb) => {
       const ext = file.originalname.split('.').pop().toLowerCase();
-      const folder = file.mimetype === 'application/pdf' ? 'pdfs' : 'audiobooks';
+      let folder = 'audiobooks';
+      if (file.mimetype === 'application/pdf') folder = 'pdfs';
+      else if (file.mimetype.startsWith('image/')) folder = 'images';
       cb(null, `${folder}/${Date.now()}-${Math.round(Math.random() * 1e9)}.${ext}`);
     },
   }),
   limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
   fileFilter: (req, file, cb) => {
-    if (ALLOWED_MIME.includes(file.mimetype) || file.mimetype.startsWith('audio/')) {
+    if (ALLOWED_MIME.includes(file.mimetype) || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new AppError('Only PDF and audio files are allowed', 400), false);
+      cb(new AppError('Only PDF, audio, and image files are allowed', 400), false);
     }
   },
 });
