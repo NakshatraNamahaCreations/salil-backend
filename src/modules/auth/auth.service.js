@@ -7,6 +7,7 @@ const Author = require('../../modules/authors/Author.model');
 const Wallet = require('../wallet/Wallet.model');
 const WalletTransaction = require('../wallet/WalletTransaction.model');
 const Referral = require('../referrals/Referral.model');
+const ReferralSettings = require('../referrals/ReferralSettings.model');
 const DeviceSession = require('../security/DeviceSession.model');
 const AppError = require('../../common/AppError');
 const otpService = require('./otp.service');
@@ -14,7 +15,6 @@ const PhoneOTP = require('./PhoneOTP.model');
 const EmailOTP = require('./EmailOTP.model');
 const emailService = require('../../common/email.service');
 
-const REFERRAL_REWARD_COINS = 10;
 
 /**
  * Generate access and refresh tokens
@@ -82,36 +82,69 @@ const register = async ({ name, email, password, phone, referralCode }) => {
   });
   await user.save();
 
-  await Wallet.create({ userId: user._id });
+  const refereeWallet = await Wallet.create({ userId: user._id });
 
-  // ── Apply referral code: award 10 coins to referrer ──────────
+  // ── Apply referral code ─────────────────────────────────────
   if (referralCode) {
-    const referrer = await User.findOne({ referralCode: referralCode.toUpperCase().trim() });
-    if (referrer && referrer._id.toString() !== user._id.toString()) {
-      const referrerWallet = await Wallet.findOne({ userId: referrer._id });
-      if (referrerWallet) {
-        referrerWallet.availableCoins += REFERRAL_REWARD_COINS;
-        referrerWallet.totalCoins += REFERRAL_REWARD_COINS;
-        await referrerWallet.save();
+    const settings = await ReferralSettings.findOne().lean();
+    const programActive = !settings || settings.isActive !== false;
 
-        await WalletTransaction.create({
-          userId: referrer._id,
-          type: 'credit',
-          source: 'referral',
-          coins: REFERRAL_REWARD_COINS,
-          balanceAfter: referrerWallet.availableCoins,
-          notes: `Referral reward: ${user.name} joined using your code`,
-        });
+    if (programActive) {
+      const referrer = await User.findOne({ referralCode: referralCode.toUpperCase().trim() });
+      if (referrer && referrer._id.toString() !== user._id.toString()) {
+        const maxReferrals = Number(settings?.maxReferrals) || 0;
+        const referrerReward = Number(settings?.referrerReward) || 0;
+        const refereeReward = Number(settings?.refereeReward) || 0;
+
+        const existingCount = maxReferrals > 0
+          ? await Referral.countDocuments({ referrerId: referrer._id, status: 'completed' })
+          : 0;
+        const withinLimit = maxReferrals === 0 || existingCount < maxReferrals;
+
+        if (withinLimit) {
+          if (referrerReward > 0) {
+            const referrerWallet = await Wallet.findOne({ userId: referrer._id });
+            if (referrerWallet) {
+              referrerWallet.availableCoins += referrerReward;
+              referrerWallet.totalCoins += referrerReward;
+              await referrerWallet.save();
+
+              await WalletTransaction.create({
+                userId: referrer._id,
+                type: 'credit',
+                source: 'referral',
+                coins: referrerReward,
+                balanceAfter: referrerWallet.availableCoins,
+                notes: `Referral reward: ${user.name} joined using your code`,
+              });
+            }
+          }
+
+          if (refereeReward > 0) {
+            refereeWallet.availableCoins += refereeReward;
+            refereeWallet.totalCoins += refereeReward;
+            await refereeWallet.save();
+
+            await WalletTransaction.create({
+              userId: user._id,
+              type: 'credit',
+              source: 'referral',
+              coins: refereeReward,
+              balanceAfter: refereeWallet.availableCoins,
+              notes: `Welcome reward for using referral code ${referralCode.toUpperCase().trim()}`,
+            });
+          }
+
+          await Referral.create({
+            referrerId: referrer._id,
+            refereeId: user._id,
+            referralCode: referralCode.toUpperCase().trim(),
+            status: 'completed',
+            rewardGiven: referrerReward > 0 || refereeReward > 0,
+            rewardAmount: referrerReward,
+          });
+        }
       }
-
-      await Referral.create({
-        referrerId: referrer._id,
-        refereeId: user._id,
-        referralCode: referralCode.toUpperCase().trim(),
-        status: 'completed',
-        rewardGiven: true,
-        rewardAmount: REFERRAL_REWARD_COINS,
-      });
     }
   }
 
