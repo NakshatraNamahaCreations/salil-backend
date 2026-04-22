@@ -81,8 +81,8 @@ const authLimiter = rateLimit({
 app.use('/api/v1/auth', authLimiter);
 
 // ─── Body parsing ────────────────────────────────────────────
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+app.use(express.json({ limit: '40mb' }));
+app.use(express.urlencoded({ extended: true, limit: '40mb' }));
 app.use(compression());
 
 // ─── Logging ─────────────────────────────────────────────────
