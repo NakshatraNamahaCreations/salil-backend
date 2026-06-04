@@ -17,6 +17,14 @@ const AppError = require('../../common/AppError');
 const { asyncHandler } = require('../../common/errorHandler');
 const { streamPdfFromS3 } = require('../../common/signedUrl');
 
+function extractYouTubeVideoId(url) {
+  if (!url || typeof url !== 'string') return '';
+  const m = url.match(
+    /(?:youtube\.com\/watch\?(?:.*&)?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtube\.com\/v\/)([A-Za-z0-9_-]{11})/
+  );
+  return m?.[1] || '';
+}
+
 // ─── Helpers ─────────────────────────────────────────────────
 
 /**
@@ -441,17 +449,23 @@ const getContentById = asyncHandler(async (req, res) => {
   if (podcast) {
     const episodes = await PodcastEpisode.find({ seriesId: id, status: 'published' }).sort({ episodeNumber: 1 }).lean();
     const content = podcastToContent(podcast);
-    content.chapters = episodes.map(ep => ({
-      id: ep._id.toString(),
-      title: ep.title,
-      order: ep.episodeNumber,
-      duration: ep.duration,
-      youtube_id: ep.youtubeMeta?.videoId || '',
-      thumbnail: ep.thumbnail || ep.youtubeMeta?.thumbnailUrl || '',
-      is_free: ep.isFree,
-      coin_cost: ep.coinCost,
-      description: ep.description || '',
-    }));
+    content.chapters = episodes.map(ep => {
+      const videoId = ep.youtubeMeta?.videoId || extractYouTubeVideoId(ep.youtubeUrl);
+      return {
+        id: ep._id.toString(),
+        title: ep.title,
+        order: ep.episodeNumber,
+        duration: ep.duration,
+        youtube_id: videoId,
+        thumbnail:
+          ep.thumbnail ||
+          ep.youtubeMeta?.thumbnailUrl ||
+          (videoId ? `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg` : ''),
+        is_free: ep.isFree,
+        coin_cost: ep.coinCost,
+        description: ep.description || '',
+      };
+    });
     return res.json({ success: true, data: content });
   }
 

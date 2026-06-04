@@ -2,7 +2,32 @@ const Video = require('./Video.model');
 const VideoSeries = require('./VideoSeries.model');
 const AppError = require('../../common/AppError');
 
+function extractYouTubeVideoId(url) {
+  if (!url || typeof url !== 'string') return '';
+  const m = url.match(
+    /(?:youtube\.com\/watch\?(?:.*&)?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtube\.com\/v\/)([A-Za-z0-9_-]{11})/
+  );
+  return m?.[1] || '';
+}
+
+function enrichYouTubeMeta(data) {
+  if (data?.youtubeUrl) {
+    const videoId = extractYouTubeVideoId(data.youtubeUrl);
+    if (videoId) {
+      data.youtubeMeta = {
+        ...(data.youtubeMeta || {}),
+        videoId,
+        thumbnailUrl:
+          data.youtubeMeta?.thumbnailUrl ||
+          `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+      };
+    }
+  }
+  return data;
+}
+
 const createVideo = async (data) => {
+  enrichYouTubeMeta(data);
   const video = new Video(data);
   await video.save();
   if (data.seriesId) {
@@ -42,6 +67,7 @@ const getVideoById = async (id) => {
 const updateVideo = async (id, data) => {
   const video = await Video.findById(id);
   if (!video) throw AppError.notFound('Video not found');
+  enrichYouTubeMeta(data);
   Object.assign(video, data);
   await video.save();
   return video;

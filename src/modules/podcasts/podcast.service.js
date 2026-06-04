@@ -3,6 +3,34 @@ const PodcastEpisode = require('./PodcastEpisode.model');
 const AppError = require('../../common/AppError');
 const slugify = require('slugify');
 
+function extractYouTubeVideoId(url) {
+  if (!url || typeof url !== 'string') return '';
+  const patterns = [
+    /(?:youtube\.com\/watch\?(?:.*&)?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtube\.com\/v\/)([A-Za-z0-9_-]{11})/,
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m && m[1]) return m[1];
+  }
+  return '';
+}
+
+function enrichYouTubeMeta(data) {
+  if (data?.sourceType === 'youtube_link' && data?.youtubeUrl) {
+    const videoId = extractYouTubeVideoId(data.youtubeUrl);
+    if (videoId) {
+      data.youtubeMeta = {
+        ...(data.youtubeMeta || {}),
+        videoId,
+        thumbnailUrl:
+          data.youtubeMeta?.thumbnailUrl ||
+          `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+      };
+    }
+  }
+  return data;
+}
+
 // ─── Series ──────────────────────────────────────────────
 
 const createSeries = async (data, authorId = null) => {
@@ -75,6 +103,7 @@ const createEpisode = async (seriesId, data) => {
     data.episodeNumber = last ? last.episodeNumber + 1 : 1;
   }
 
+  enrichYouTubeMeta(data);
   const episode = new PodcastEpisode({ ...data, seriesId });
   await episode.save();
 
@@ -91,6 +120,7 @@ const getEpisodesBySeries = async (seriesId) => {
 const updateEpisode = async (id, data) => {
   const episode = await PodcastEpisode.findById(id);
   if (!episode) throw AppError.notFound('Podcast episode not found');
+  enrichYouTubeMeta(data);
   Object.assign(episode, data);
   await episode.save();
   return episode;
