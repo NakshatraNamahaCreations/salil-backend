@@ -12,6 +12,16 @@ router.get('/audiobook/:id', readerController.getAudiobookById);
 router.get('/content', readerController.getContent);
 router.get('/content/:id', readerController.getContentById);
 
+// PUBLIC — Razorpay POSTs the payment result here after a redirect-mode payment.
+// Razorpay sends application/x-www-form-urlencoded; signature verification IS the auth.
+router.post(
+  '/books/:bookId/payment-callback',
+  express.urlencoded({ extended: true }),
+  bookPurchaseCtrl.paymentCallback,
+);
+// Sentinel page the mobile WebView intercepts; renders a simple status page if a browser loads it.
+router.get('/payment-result', bookPurchaseCtrl.paymentResultPage);
+
 // ─── Profile Routes (Authenticated) ──────────────────────────
 router.get('/profile', authenticateReader, readerController.getProfile);
 router.put('/profile', authenticateReader, readerController.updateProfile);

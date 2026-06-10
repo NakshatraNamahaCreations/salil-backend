@@ -244,39 +244,68 @@ const getCategories = asyncHandler(async (req, res) => {
  * GET /api/v1/reader/search?q=query&content_type=book&limit=20
  */
 const searchContent = asyncHandler(async (req, res) => {
-  const { q, content_type, limit = 20 } = req.query;
-  if (!q || q.trim().length < 1) {
-    return res.json({ success: true, data: [] });
-  }
+  const { q, content_type, language, limit = 20 } = req.query;
+  const trimmedQ = (q || '').trim();
+  const lim = Math.min(parseInt(limit) || 20, 100);
+  const langFilter = language && language !== 'all' ? language : null;
+
+  // When q is empty, behave as a browse endpoint: return top content (newest)
+  // honoring content_type + language filters. This lets the Explore screen show
+  // results based on language alone.
+  const searchRegex = trimmedQ ? { $regex: trimmedQ, $options: 'i' } : null;
+  const titleOrDesc = searchRegex
+    ? { $or: [{ title: searchRegex }, { description: searchRegex }] }
+    : {};
 
   const results = [];
-  const searchRegex = { $regex: q, $options: 'i' };
-  const lim = Math.min(parseInt(limit) || 20, 100);
 
+  // Books (ebooks)
   if (!content_type || content_type === 'book') {
-    const books = await Book.find({
+    const bookQuery = {
       status: 'published',
-      $or: [{ title: searchRegex }, { description: searchRegex }],
-    })
+      contentType: { $in: ['ebook', null] },
+      ...titleOrDesc,
+    };
+    if (langFilter) bookQuery.bookLanguage = langFilter;
+    const books = await Book.find(bookQuery)
       .populate('authorId', 'displayName name')
+      .sort({ totalReads: -1, createdAt: -1 })
       .limit(lim)
       .lean();
     results.push(...books.map(bookToContent));
   }
 
+  // Audiobooks (Book documents with contentType: 'audiobook')
+  if (!content_type || content_type === 'audiobook') {
+    const abQuery = {
+      status: 'published',
+      contentType: 'audiobook',
+      ...titleOrDesc,
+    };
+    if (langFilter) abQuery.bookLanguage = langFilter;
+    const audiobooks = await Book.find(abQuery)
+      .populate('authorId', 'displayName name')
+      .sort({ totalReads: -1, createdAt: -1 })
+      .limit(lim)
+      .lean();
+    results.push(...audiobooks.map((b) =>
+      audiobookToContent(b, { totalListens: 0, isFree: b.isFree, price: b.audiobookPrice || 0 })
+    ));
+  }
+
   if (!content_type || content_type === 'podcast') {
-    const podcasts = await PodcastSeries.find({
-      $or: [{ title: searchRegex }, { description: searchRegex }],
-    })
+    const podcastQuery = { ...titleOrDesc };
+    const podcasts = await PodcastSeries.find(podcastQuery)
+      .sort({ createdAt: -1 })
       .limit(lim)
       .lean();
     results.push(...podcasts.map(podcastToContent));
   }
 
   if (!content_type || content_type === 'video') {
-    const videos = await Video.find({
-      $or: [{ title: searchRegex }, { description: searchRegex }],
-    })
+    const videoQuery = { ...titleOrDesc };
+    const videos = await Video.find(videoQuery)
+      .sort({ createdAt: -1 })
       .limit(lim)
       .lean();
     results.push(...videos.map(videoToContent));
@@ -290,9 +319,11 @@ const searchContent = asyncHandler(async (req, res) => {
  * Unified content feed with filters: content_type, is_trending, is_featured, is_new_release, category_id, limit
  */
 const getContent = asyncHandler(async (req, res) => {
-  const { content_type, is_trending, is_featured, is_new_release, category_id, limit = 20 } = req.query;
+  const { content_type, is_trending, is_featured, is_new_release, category_id, language, limit = 20 } = req.query;
   const lim = Math.min(parseInt(limit) || 20, 100);
   const results = [];
+  // 'all' (or empty) = no language filter. Otherwise filter on bookLanguage / matching field.
+  const langFilter = language && language !== 'all' ? language : null;
 
   console.log("content_type",content_type)
   // Books (ebooks only — also include legacy docs where contentType is not set)
@@ -300,6 +331,7 @@ const getContent = asyncHandler(async (req, res) => {
     const bookQuery = { status: 'published', contentType: { $in: ['ebook', null] } };
     if (is_featured === 'true') bookQuery.isFeatured = true;
     if (category_id) bookQuery.categoryId = category_id;
+    if (langFilter) bookQuery.bookLanguage = langFilter;
 
     const books = await Book.find(bookQuery)
       .populate('authorId', 'displayName name')
@@ -318,6 +350,7 @@ const getContent = asyncHandler(async (req, res) => {
     const audiobookQuery = { status: 'published', contentType: 'audiobook' };
     if (is_featured === 'true') audiobookQuery.isFeatured = true;
     if (category_id) audiobookQuery.categoryId = category_id;
+    if (langFilter) audiobookQuery.bookLanguage = langFilter;
 
     const audiobooks = await Book.find(audiobookQuery)
       .populate('authorId', 'displayName name')

@@ -119,6 +119,12 @@ const createOrder = asyncHandler(async (req, res) => {
     { upsert: true, new: true }
   );
 
+  // Build absolute callback URL for Razorpay's redirect mode.
+  // Razorpay POSTs the payment result here once the user completes payment.
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  const callbackUrl = `${protocol}://${host}/api/v1/reader/books/${bookId}/payment-callback`;
+
   return res.json({
     success: true,
     data: {
@@ -127,6 +133,7 @@ const createOrder = asyncHandler(async (req, res) => {
       currency: order.currency,
       key_id: config.razorpay.keyId,
       book_title: book.title,
+      callback_url: callbackUrl,
       already_purchased: false,
       original_amount: originalPrice,
       discount_amount: discountAmount,
@@ -134,6 +141,129 @@ const createOrder = asyncHandler(async (req, res) => {
       coupon_applied: !!appliedCoupon,
     },
   });
+});
+
+/**
+ * POST /api/v1/reader/books/:bookId/payment-callback
+ * PUBLIC endpoint — Razorpay's redirect target after the user completes payment.
+ * Authentication: HMAC signature verification (only Razorpay knows the secret).
+ *
+ * Razorpay sends the payment payload as application/x-www-form-urlencoded.
+ * After verifying, this endpoint marks the purchase as completed and returns
+ * an HTML page that redirects to a sentinel URL the mobile WebView intercepts:
+ *   https://<host>/api/v1/reader/payment-result?status=success|failure&...
+ */
+const paymentCallback = asyncHandler(async (req, res) => {
+  const { bookId } = req.params;
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  const baseUrl = `${protocol}://${host}`;
+
+  const renderRedirectHtml = (params) => {
+    const qs = new URLSearchParams(params).toString();
+    const redirectUrl = `${baseUrl}/api/v1/reader/payment-result?${qs}`;
+    return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:-apple-system,system-ui,sans-serif;background:#0b0e14;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:24px}.box{max-width:320px}.spin{display:inline-block;width:32px;height:32px;border:3px solid #1e293b;border-top-color:#22c55e;border-radius:50%;animation:s 0.8s linear infinite;margin-bottom:16px}@keyframes s{to{transform:rotate(360deg)}}</style>
+</head><body><div class="box"><div class="spin"></div><p>Finishing up...</p></div>
+<script>window.location.replace(${JSON.stringify(redirectUrl)});</script>
+</body></html>`;
+  };
+
+  // Missing required fields → treat as failure
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return res.status(200).type('html').send(renderRedirectHtml({
+      status: 'failure',
+      bookId,
+      reason: 'missing_fields',
+    }));
+  }
+
+  // Verify HMAC signature
+  const hmac = crypto.createHmac('sha256', config.razorpay.keySecret);
+  hmac.update(razorpay_order_id + '|' + razorpay_payment_id);
+  const generated = hmac.digest('hex');
+
+  if (generated !== razorpay_signature) {
+    return res.status(200).type('html').send(renderRedirectHtml({
+      status: 'failure',
+      bookId,
+      reason: 'signature_mismatch',
+    }));
+  }
+
+  // Mark the purchase complete
+  const purchase = await BookPurchase.findOneAndUpdate(
+    { gatewayOrderId: razorpay_order_id },
+    {
+      status: 'completed',
+      gatewayPaymentId: razorpay_payment_id,
+      gatewaySignature: razorpay_signature,
+    },
+    { new: true }
+  );
+
+  if (!purchase) {
+    return res.status(200).type('html').send(renderRedirectHtml({
+      status: 'failure',
+      bookId,
+      reason: 'order_not_found',
+    }));
+  }
+
+  // Increment coupon usage if one was applied
+  if (purchase.couponCode) {
+    try {
+      await Coupon.findOneAndUpdate(
+        { code: purchase.couponCode },
+        { $inc: { usedCount: 1 } }
+      );
+    } catch (e) {
+      console.warn('[payment-callback] coupon increment failed', e?.message);
+    }
+  }
+
+  // Audit-trail payment record (userId comes from the BookPurchase, not auth).
+  try {
+    await Payment.create({
+      userId: purchase.userId,
+      gateway: 'razorpay',
+      amount: purchase.amountPaid * 100,
+      currency: purchase.currency,
+      status: 'captured',
+      gatewayOrderId: razorpay_order_id,
+      gatewayPaymentId: razorpay_payment_id,
+      gatewaySignature: razorpay_signature,
+      metadata: { type: 'book_purchase', bookId },
+    });
+  } catch (e) {
+    console.warn('[payment-callback] audit payment record failed', e?.message);
+  }
+
+  return res.status(200).type('html').send(renderRedirectHtml({
+    status: 'success',
+    bookId,
+    paymentId: razorpay_payment_id,
+  }));
+});
+
+/**
+ * GET /api/v1/reader/payment-result
+ * Sentinel URL — the mobile WebView's onShouldStartLoadWithRequest intercepts
+ * any navigation to this path, extracts the query params, and routes the host
+ * app to /payment-success or /payment-failure WITHOUT loading the URL.
+ * If a browser does load it (web fallback), we render a small status page.
+ */
+const paymentResultPage = asyncHandler(async (req, res) => {
+  const { status, bookId, paymentId, reason } = req.query || {};
+  const ok = status === 'success';
+  return res.status(200).type('html').send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${ok ? 'Payment Successful' : 'Payment Failed'}</title>
+<style>body{font-family:-apple-system,system-ui,sans-serif;background:#0b0e14;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:24px}.box{max-width:340px}.icon{font-size:48px;margin-bottom:12px}h1{margin:0 0 8px;font-size:22px}p{margin:0;color:#94a3b8;font-size:14px}</style>
+</head><body><div class="box"><div class="icon">${ok ? '✅' : '❌'}</div><h1>${ok ? 'Payment Successful' : 'Payment Failed'}</h1><p>${ok ? 'Please return to the app to start reading.' : `Reason: ${reason || 'unknown'}`}</p></div></body></html>`);
 });
 
 /**
@@ -213,4 +343,4 @@ const getPurchaseStatus = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { createOrder, verifyPayment, getPurchaseStatus };
+module.exports = { createOrder, verifyPayment, getPurchaseStatus, paymentCallback, paymentResultPage };
