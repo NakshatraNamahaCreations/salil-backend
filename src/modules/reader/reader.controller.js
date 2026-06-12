@@ -529,7 +529,7 @@ const getAudiobookById = asyncHandler(async (req, res) => {
 
   const tracks = await Audiobook.find({ bookId: id, status: 'published' })
     .populate('chapterId', 'chapterImage')
-    .sort({ _id: 1 })
+    .sort({ orderNumber: 1, _id: 1 })
     .lean();
 
   const totalDuration = tracks.reduce((sum, t) => sum + (t.duration || 0), 0);
