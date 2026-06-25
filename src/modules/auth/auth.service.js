@@ -169,7 +169,21 @@ const login = async ({ identifier, email, password, expectedRole }) => {
   if (isEmail) {
     user = await User.findOne({ email: lookupValue.toLowerCase() }).select('+passwordHash');
   } else {
+    // Phone login. Different signup flows store the number in different formats:
+    //   register()  → bare 10-digit,           e.g. "7499667439"
+    //   verifyOTP() → country-code prefixed,    e.g. "+917499667439"
+    // Try an exact match first (preserves prior behaviour), then fall back to a
+    // format-agnostic match so a user can sign in whether or not they include
+    // +91, regardless of which format their account was created in.
     user = await User.findOne({ phone: lookupValue }).select('+passwordHash');
+    if (!user) {
+      const digits = lookupValue.replace(/\D/g, '');     // strip +, spaces, dashes
+      const last10 = digits.slice(-10);
+      const candidates = [...new Set(
+        [digits, last10, `+91${last10}`, `91${last10}`].filter(Boolean)
+      )];
+      user = await User.findOne({ phone: { $in: candidates } }).select('+passwordHash');
+    }
   }
 
   if (!user) {
