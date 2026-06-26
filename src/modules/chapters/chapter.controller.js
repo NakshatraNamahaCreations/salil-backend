@@ -1,11 +1,13 @@
 const chapterService = require('./chapter.service');
 const { asyncHandler } = require('../../common/errorHandler');
 const { success, created } = require('../../common/response');
+const { compressAndUploadPdf } = require('../../common/pdfUpload');
 
-// Helper: if a PDF was uploaded to S3, set rawPdfUrl and sourceType
+// Helper: if a PDF was uploaded, compress it (best-effort) and push it to S3,
+// then set rawPdfUrl + sourceType on the body.
 const processPdfIfPresent = async (req) => {
-  if (req.file && req.file.location) {
-    req.body.rawPdfUrl = req.file.location; // S3 URL
+  if (req.file && req.file.buffer) {
+    req.body.rawPdfUrl = await compressAndUploadPdf(req.file.buffer);
     req.body.sourceType = 'pdf';
   }
 };
@@ -53,9 +55,8 @@ const adminBulkZipUploadChapters = asyncHandler(async (req, res) => {
   if (!req.file) throw require('../../common/AppError').badRequest('ZIP file is required');
 
   const AdmZip = require('adm-zip');
-  const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-  const config = require('../../config');
   const Chapter = require('./Chapter.model');
+  const { compressAndUploadPdf } = require('../../common/pdfUpload');
 
   const fs = require('fs');
   const zip = new AdmZip(req.file.path);
@@ -77,14 +78,6 @@ const adminBulkZipUploadChapters = asyncHandler(async (req, res) => {
     throw require('../../common/AppError').badRequest('No PDF files found in the ZIP');
   }
 
-  const s3Client = new S3Client({
-    credentials: {
-      accessKeyId: config.aws.accessKeyId,
-      secretAccessKey: config.aws.secretAccessKey,
-    },
-    region: config.aws.region,
-  });
-
   // Start order after existing chapters
   const lastChapter = await Chapter.findOne({ bookId: req.params.bookId }).sort({ orderNumber: -1 });
   let nextOrder = lastChapter ? lastChapter.orderNumber + 1 : 1;
@@ -98,18 +91,8 @@ const adminBulkZipUploadChapters = asyncHandler(async (req, res) => {
       const title = filename.replace(/\.pdf$/i, '');
       const pdfBuffer = zip.readFile(entry);
 
-      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-      const s3Key = `pdfs/${uniqueSuffix}.pdf`;
-
-      await s3Client.send(new PutObjectCommand({
-        Bucket: config.aws.s3Bucket,
-        Key: s3Key,
-        Body: pdfBuffer,
-        ContentType: 'application/pdf',
-        ContentDisposition: 'inline',
-      }));
-
-      const rawPdfUrl = `https://${config.aws.s3Bucket}.s3.${config.aws.region}.amazonaws.com/${s3Key}`;
+      // Compress (best-effort) and upload to S3.
+      const rawPdfUrl = await compressAndUploadPdf(pdfBuffer);
 
       const chapter = await chapterService.createChapter(req.params.bookId, {
         title,

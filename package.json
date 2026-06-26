@@ -7,6 +7,8 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "seed": "node src/seeds/seed.js",
+    "compress-pdfs": "node scripts/compress-pdfs.js",
+    "recompress-s3-pdfs": "node scripts/recompress-s3-pdfs.js",
     "test": "jest --coverage"
   },
   "keywords": [

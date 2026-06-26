@@ -154,6 +154,8 @@ app.use(errorHandler);
 const startServer = async () => {
   try {
     await connectDB();
+    // Optional background PDF-compression worker (no-op unless PDF_COMPRESS_QUEUE=true).
+    require('./common/pdfQueue').initPdfQueue();
     app.listen(config.port, () => {
       logger.info(`🚀 Salil javeri API running on port ${config.port} [${config.env}]`);
     });

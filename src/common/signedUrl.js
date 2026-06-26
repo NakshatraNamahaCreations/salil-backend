@@ -159,5 +159,5 @@ const getPresignedUploadUrl = async (key, contentType) => {
   return { uploadUrl, fileUrl };
 };
 
-module.exports = { extractS3Key, streamPdfFromS3, getPresignedPdfUrl, getPresignedUploadUrl };
+module.exports = { extractS3Key, extractS3Parts, streamPdfFromS3, getPresignedPdfUrl, getPresignedUploadUrl };
 
