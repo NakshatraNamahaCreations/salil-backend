@@ -13,7 +13,7 @@ const paymentSchema = new mongoose.Schema(
     },
     gateway: {
       type: String,
-      enum: ['razorpay', 'stripe'],
+      enum: ['razorpay', 'stripe', 'apple_iap'],
       required: true,
     },
     gatewayOrderId: { type: String, default: '' },

@@ -16,6 +16,7 @@ const createBookSchema = {
     ebookPrice: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
     audiobookPrice: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
     comboPrice: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
+    appleProductId: Joi.string().allow('').optional(),
     status: Joi.string().valid('draft', 'published', 'archived').optional(),
   }).options({ allowUnknown: true, stripUnknown: false }),
 };
@@ -36,6 +37,7 @@ const updateBookSchema = {
     ebookPrice: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
     audiobookPrice: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
     comboPrice: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
+    appleProductId: Joi.string().allow('').optional(),
     status: Joi.string().valid('draft', 'published', 'archived').optional(),
     isPublished: Joi.boolean().optional(),
   }).options({ allowUnknown: true, stripUnknown: false }),

@@ -17,6 +17,11 @@ const bookPurchaseSchema = new mongoose.Schema(
     discountAmount: { type: Number, default: 0 },
     couponCode: { type: String, default: '' },
     currency: { type: String, default: 'INR' },
+    gateway: {
+      type: String,
+      enum: ['razorpay', 'apple_iap'],
+      default: 'razorpay',
+    },
     gatewayOrderId: { type: String, default: '' },
     gatewayPaymentId: { type: String, default: '' },
     gatewaySignature: { type: String, default: '' },

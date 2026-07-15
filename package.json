@@ -20,8 +20,10 @@
   "author": "Salil Javeri",
   "license": "ISC",
   "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
     "@aws-sdk/client-s3": "^3.1009.0",
     "@aws-sdk/s3-request-presigner": "^3.1014.0",
+    "adm-zip": "^0.5.10",
     "aws-sdk": "^2.1693.0",
     "bcryptjs": "^2.4.3",
     "bull": "^4.12.0",
@@ -45,7 +47,6 @@
     "multer-s3": "^3.0.1",
     "music-metadata": "^7.14.0",
     "nodemailer": "^8.0.3",
-    "adm-zip": "^0.5.10",
     "pdf-parse": "^1.1.4",
     "razorpay": "^2.9.2",
     "slugify": "^1.6.6",

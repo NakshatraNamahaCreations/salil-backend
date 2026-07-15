@@ -27,6 +27,9 @@ router.get('/profile', authenticateReader, readerController.getProfile);
 router.put('/profile', authenticateReader, readerController.updateProfile);
 router.put('/profile/preferences', authenticateReader, readerController.updatePreferences);
 
+// Permanent account deletion (App Store guideline 5.1.1(v))
+router.delete('/account', authenticateReader, readerController.deleteAccount);
+
 // ─── Library Routes (Authenticated) ──────────────────────────
 router.get('/library', authenticateReader, readerController.getLibrary);
 router.post('/library/:contentId', authenticateReader, readerController.addToLibrary);
@@ -45,6 +48,8 @@ router.post('/progress', authenticateReader, readerController.saveProgress);
 // ─── Book Purchase Routes (Authenticated) ────────────────────
 router.post('/books/:bookId/purchase', authenticateReader, bookPurchaseCtrl.createOrder);
 router.post('/books/:bookId/verify-payment', authenticateReader, bookPurchaseCtrl.verifyPayment);
+// Apple In-App Purchase verification (App Store guideline 3.1.1)
+router.post('/books/:bookId/verify-apple-purchase', authenticateReader, bookPurchaseCtrl.verifyApplePurchase);
 router.get('/books/:bookId/purchase-status', authenticateReader, bookPurchaseCtrl.getPurchaseStatus);
 
 // ─── Chapter Unlock Status (Authenticated) ────────────────────

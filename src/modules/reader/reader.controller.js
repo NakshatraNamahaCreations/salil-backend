@@ -12,7 +12,20 @@ const Wishlist = require('./Wishlist.model');
 const ContentProgress = require('./ContentProgress.model');
 const BookPurchase = require('../payments/BookPurchase.model');
 const Review = require('../reviews/Review.model');
+const Comment = require('../reviews/Comment.model');
 const Wallet = require('../wallet/Wallet.model');
+const WalletTransaction = require('../wallet/WalletTransaction.model');
+const UnlockTransaction = require('../wallet/UnlockTransaction.model');
+const Payment = require('../payments/Payment.model');
+const Purchase = require('../payments/Purchase.model');
+const Referral = require('../referrals/Referral.model');
+const DeviceSession = require('../security/DeviceSession.model');
+const ReadingProgress = require('../analytics/ReadingProgress.model');
+const ListeningProgress = require('../analytics/ListeningProgress.model');
+const WatchingProgress = require('../analytics/WatchingProgress.model');
+const AnalyticsEvent = require('../analytics/AnalyticsEvent.model');
+const EmailOTP = require('../auth/EmailOTP.model');
+const PhoneOTP = require('../auth/PhoneOTP.model');
 const AppError = require('../../common/AppError');
 const { asyncHandler } = require('../../common/errorHandler');
 const { streamPdfFromS3 } = require('../../common/signedUrl');
@@ -53,6 +66,7 @@ const bookToContent = (book) => ({
   is_new_release: book.publishedAt ? Date.now() - new Date(book.publishedAt).getTime() < 30 * 24 * 60 * 60 * 1000 : false,
   created_at: book.createdAt ? book.createdAt.toISOString() : new Date().toISOString(),
   slug: book.slug,
+  apple_product_id: book.appleProductId || '',
 });
 
 /**
@@ -129,6 +143,7 @@ const audiobookToContent = (book, { totalListens = 0, isFree = true, price = 0 }
   is_new_release: book.publishedAt ? Date.now() - new Date(book.publishedAt).getTime() < 30 * 24 * 60 * 60 * 1000 : false,
   created_at: book.createdAt ? book.createdAt.toISOString() : new Date().toISOString(),
   slug: book.slug,
+  apple_product_id: book.appleProductId || '',
 });
 
 // ─── Profile Controllers (Authenticated) ─────────────────────
@@ -156,6 +171,45 @@ const getProfile = asyncHandler(async (req, res) => {
       preferences: user.preferences || {},
     },
   });
+});
+
+/**
+ * DELETE /api/v1/reader/account
+ * Permanently deletes the authenticated user's account and ALL personal data
+ * (App Store guideline 5.1.1(v) — deactivating/disabling is not sufficient).
+ * Idempotent from the app's perspective: once deleted the token dies with the
+ * user, so a repeat call simply gets a 401 from the auth middleware.
+ */
+const deleteAccount = asyncHandler(async (req, res) => {
+  const userId = req.userId;
+  const user = await User.findById(userId).lean();
+  if (!user) throw AppError.notFound('User not found');
+
+  await Promise.all([
+    Library.deleteMany({ userId }),
+    Wishlist.deleteMany({ userId }),
+    ContentProgress.deleteMany({ userId }),
+    ReadingProgress.deleteMany({ userId }),
+    ListeningProgress.deleteMany({ userId }),
+    WatchingProgress.deleteMany({ userId }),
+    AnalyticsEvent.deleteMany({ userId }),
+    Review.deleteMany({ userId }),
+    Comment.deleteMany({ userId }),
+    BookPurchase.deleteMany({ userId }),
+    Purchase.deleteMany({ userId }),
+    Payment.deleteMany({ userId }),
+    Wallet.deleteMany({ userId }),
+    WalletTransaction.deleteMany({ userId }),
+    UnlockTransaction.deleteMany({ userId }),
+    DeviceSession.deleteMany({ userId }),
+    Referral.deleteMany({ $or: [{ referrerId: userId }, { refereeId: userId }] }),
+    EmailOTP.deleteMany({ email: user.email }),
+    user.phone ? PhoneOTP.deleteMany({ phone: user.phone }) : Promise.resolve(),
+  ]);
+
+  await User.findByIdAndDelete(userId);
+
+  res.json({ success: true });
 });
 
 /**
@@ -1016,6 +1070,7 @@ module.exports = {
   getProfile,
   updateProfile,
   updatePreferences,
+  deleteAccount,
   getBanners,
   getCategories,
   searchContent,

@@ -25,6 +25,8 @@ const bookSchema = new mongoose.Schema(
     ebookPrice: { type: Number, default: 0 },
     audiobookPrice: { type: Number, default: 0 },
     comboPrice: { type: Number, default: 0 },
+    // App Store Connect product ID override; empty = convention book_<id>/audiobook_<id>
+    appleProductId: { type: String, default: '', trim: true },
     status: {
       type: String,
       enum: ['draft', 'published', 'archived'],

@@ -7,6 +7,7 @@ const Book = require('../books/Book.model');
 const BookPurchase = require('./BookPurchase.model');
 const Payment = require('./Payment.model');
 const Coupon = require('../coupons/Coupon.model');
+const { verifySignedTransaction } = require('./appleIap.service');
 
 /**
  * POST /api/v1/reader/books/:bookId/purchase
@@ -327,6 +328,123 @@ const verifyPayment = asyncHandler(async (req, res) => {
 });
 
 /**
+ * POST /api/v1/reader/books/:bookId/verify-apple-purchase
+ * Verifies an Apple In-App Purchase (App Store guideline 3.1.1) and grants the
+ * content exactly like a verified Razorpay payment.
+ * Body: { purchaseType, productId, transactionId, jws }
+ */
+const verifyApplePurchase = asyncHandler(async (req, res) => {
+  const { bookId } = req.params;
+  const { purchaseType = 'ebook', productId, jws } = req.body || {};
+
+  if (!jws || !productId) {
+    throw AppError.badRequest('Missing productId or signed transaction');
+  }
+  if (!['ebook', 'audiobook'].includes(purchaseType)) {
+    throw AppError.badRequest('Invalid purchaseType');
+  }
+
+  const book = await Book.findById(bookId).lean().catch(() => null);
+  if (!book) throw AppError.notFound('Book not found');
+
+  // Cryptographic verification: certificate chain to Apple's roots, signature,
+  // bundleId and environment (production, falling back to sandbox for review builds).
+  let verified;
+  try {
+    verified = await verifySignedTransaction(jws);
+  } catch (err) {
+    console.error('[apple-iap] JWS verification failed:', err?.status ?? '', err?.message ?? err);
+    throw AppError.badRequest('Apple purchase verification failed');
+  }
+  const tx = verified.transaction;
+
+  // The product paid for at Apple must be the product for THIS content.
+  const expectedProductId =
+    book.appleProductId ||
+    `${purchaseType === 'audiobook' ? 'audiobook' : 'book'}_${bookId}`;
+  if (tx.productId !== productId || tx.productId !== expectedProductId) {
+    throw AppError.badRequest('Product does not match this content');
+  }
+
+  // A refunded/revoked transaction grants nothing.
+  if (tx.revocationDate) {
+    throw AppError.badRequest('This purchase has been refunded by Apple');
+  }
+
+  // Trust the transactionId inside the verified JWS, not the request body.
+  const appleTransactionId = String(tx.transactionId || '');
+  if (!appleTransactionId) throw AppError.badRequest('Transaction id missing');
+
+  // Replay protection: each Apple transactionId is recorded once. Restore
+  // Purchases legitimately re-sends it for the same account → success. A
+  // different account presenting someone else's transaction is rejected.
+  const existing = await BookPurchase.findOne({
+    gateway: 'apple_iap',
+    gatewayPaymentId: appleTransactionId,
+    status: 'completed',
+  }).lean();
+
+  if (existing) {
+    if (existing.userId.toString() !== req.userId.toString()) {
+      throw AppError.conflict('This purchase belongs to a different account');
+    }
+    return res.json({
+      success: true,
+      data: { verified: true, book_id: bookId, restored: true },
+    });
+  }
+
+  const originalPrice =
+    (purchaseType === 'audiobook' ? book.audiobookPrice : book.ebookPrice) || 0;
+  // StoreKit 2 reports price in milli-units of the storefront currency.
+  const amountPaid = typeof tx.price === 'number' ? tx.price / 1000 : originalPrice;
+  const currency = tx.currency || 'INR';
+
+  await BookPurchase.findOneAndUpdate(
+    { userId: req.userId, bookId, purchaseType },
+    {
+      status: 'completed',
+      gateway: 'apple_iap',
+      amountPaid,
+      originalAmount: originalPrice,
+      discountAmount: 0,
+      couponCode: '',
+      currency,
+      gatewayOrderId: tx.originalTransactionId ? String(tx.originalTransactionId) : '',
+      gatewayPaymentId: appleTransactionId,
+      gatewaySignature: '',
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  // Audit-trail payment record (mirrors the Razorpay flow).
+  try {
+    await Payment.create({
+      userId: req.userId,
+      gateway: 'apple_iap',
+      amount: Math.round(amountPaid * 100),
+      currency,
+      status: 'captured',
+      gatewayOrderId: tx.originalTransactionId ? String(tx.originalTransactionId) : '',
+      gatewayPaymentId: appleTransactionId,
+      metadata: {
+        type: 'book_purchase',
+        bookId,
+        productId: tx.productId,
+        environment: verified.environment,
+      },
+    });
+  } catch (e) {
+    console.warn('[apple-iap] audit payment record failed', e?.message);
+  }
+
+  return res.json({
+    success: true,
+    data: { verified: true, book_id: bookId },
+  });
+});
+
+/**
  * GET /api/v1/reader/books/:bookId/purchase-status
  * Returns whether the authenticated user has purchased the given book.
  */
@@ -343,4 +461,4 @@ const getPurchaseStatus = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { createOrder, verifyPayment, getPurchaseStatus, paymentCallback, paymentResultPage };
+module.exports = { createOrder, verifyPayment, verifyApplePurchase, getPurchaseStatus, paymentCallback, paymentResultPage };

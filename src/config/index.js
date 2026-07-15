@@ -41,6 +41,14 @@ module.exports = {
     secretKey: process.env.STRIPE_SECRET_KEY,
   },
 
+  apple: {
+    bundleId: process.env.APPLE_BUNDLE_ID || 'com.saliljaveri',
+    // Numeric "Apple ID" of the app (App Store Connect → App Information).
+    // Only used to validate server notifications, not purchase transactions,
+    // so verification works before the app is published.
+    appAppleId: parseInt(process.env.APPLE_APP_APPLE_ID, 10) || 0,
+  },
+
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID,
     privateKey: process.env.FIREBASE_PRIVATE_KEY,
