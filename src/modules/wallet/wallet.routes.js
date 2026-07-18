@@ -12,7 +12,12 @@ readerRouter.use(authenticate);
 readerRouter.get('/', walletController.getWallet);
 readerRouter.get('/transactions', walletController.getTransactions);
 readerRouter.post('/unlock', walletController.unlockContent);
-readerRouter.post('/add-coins', walletController.addCoins);
+// Unlock a whole book by spending coins
+readerRouter.post('/unlock-book', walletController.unlockBook);
+// Buy coins via Apple In-App Purchase (verified server-side)
+readerRouter.post('/verify-apple-coin-purchase', walletController.verifyAppleCoinPurchase);
+// NOTE: the old POST /add-coins credited coins with no payment proof — removed.
+// Coins are added only via verify-apple-coin-purchase (iOS) or admin adjustment.
 
 // ─── Admin Wallet Routes (/api/v1/admin/wallets) ─────────
 const adminRouter = express.Router();

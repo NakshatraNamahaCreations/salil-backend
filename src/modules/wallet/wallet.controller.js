@@ -37,6 +37,25 @@ const addCoins = asyncHandler(async (req, res) => {
   success(res, result, `${coins} coins added to your wallet`);
 });
 
+// Buy coins via Apple In-App Purchase — verifies the signed transaction with
+// Apple, then credits the pack's coins (replay-safe).
+const verifyAppleCoinPurchase = asyncHandler(async (req, res) => {
+  const { packId, productId, jws } = req.body;
+  const result = await walletService.verifyAppleCoinPurchase(req.userId, { packId, productId, jws });
+  success(res, result, result.alreadyCredited ? 'Purchase already credited' : `${result.coinsAdded} coins added`);
+});
+
+// Unlock a whole book (ebook/audiobook) by spending coins.
+const unlockBook = asyncHandler(async (req, res) => {
+  const { bookId, purchaseType = 'ebook' } = req.body;
+  if (!bookId) throw AppError.badRequest('bookId is required');
+  if (!['ebook', 'audiobook'].includes(purchaseType)) {
+    throw AppError.badRequest('Invalid purchaseType');
+  }
+  const result = await walletService.unlockBookWithCoins(req.userId, bookId, purchaseType);
+  success(res, result, result.alreadyOwned ? 'Already unlocked' : 'Book unlocked successfully');
+});
+
 // ─── Admin Controllers ───────────────────────────────────
 
 const adminAdjustWallet = asyncHandler(async (req, res) => {
@@ -61,8 +80,9 @@ const getCoinPacks = asyncHandler(async (req, res) => {
     price_usd: p.priceUSD,
     is_offer: p.isOffer || false,
     offer_label: p.offerLabel || null,
+    apple_product_id: p.appleProductId || `coins_${p.coins}`,
   }));
   success(res, formatted);
 });
 
-module.exports = { getWallet, getTransactions, unlockContent, addCoins, adminAdjustWallet, getCoinPacks };
+module.exports = { getWallet, getTransactions, unlockContent, addCoins, verifyAppleCoinPurchase, unlockBook, adminAdjustWallet, getCoinPacks };

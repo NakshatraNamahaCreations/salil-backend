@@ -58,7 +58,8 @@ const bookToContent = (book) => ({
   reviews_count: book.ratingCount || 0,
   access_type: book.isFree ? 'free' : 'paid',
   price_inr: book.isFree ? 0 : (book.contentType === 'audiobook' ? (book.audiobookPrice || 0) : (book.ebookPrice || 0)),
-  coin_price: 0,
+  // 1 coin = ₹1 — the coin cost to unlock this title on iOS
+  coin_price: book.isFree ? 0 : (book.contentType === 'audiobook' ? (book.audiobookPrice || 0) : (book.ebookPrice || 0)),
   chapters: [],
   is_trending: true,
   is_purchased: false,
@@ -135,7 +136,7 @@ const audiobookToContent = (book, { totalListens = 0, isFree = true, price = 0 }
   rating: book.averageRating || 0,
   reviews_count: book.ratingCount || 0,
   access_type: isFree ? 'free' : 'paid',
-  coin_price: 0,
+  coin_price: isFree ? 0 : price, // 1 coin = ₹1
   price_inr: isFree ? 0 : price,
   chapters: [],
   is_trending: true,

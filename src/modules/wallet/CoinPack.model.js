@@ -7,6 +7,8 @@ const coinPackSchema = new mongoose.Schema(
     bonusCoins: { type: Number, default: 0 },
     priceINR: { type: Number, required: true, min: 0 },
     priceUSD: { type: Number, default: 0 },
+    // App Store Connect consumable product ID; empty = convention coins_<coins>
+    appleProductId: { type: String, default: '', trim: true },
     isActive: { type: Boolean, default: true },
     isOffer: { type: Boolean, default: false },
     offerLabel: { type: String, default: '' },
