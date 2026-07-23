@@ -47,12 +47,12 @@ const verifyAppleCoinPurchase = asyncHandler(async (req, res) => {
 
 // Unlock a whole book (ebook/audiobook) by spending coins.
 const unlockBook = asyncHandler(async (req, res) => {
-  const { bookId, purchaseType = 'ebook' } = req.body;
+  const { bookId, purchaseType = 'ebook', couponCode = '' } = req.body;
   if (!bookId) throw AppError.badRequest('bookId is required');
   if (!['ebook', 'audiobook'].includes(purchaseType)) {
     throw AppError.badRequest('Invalid purchaseType');
   }
-  const result = await walletService.unlockBookWithCoins(req.userId, bookId, purchaseType);
+  const result = await walletService.unlockBookWithCoins(req.userId, bookId, purchaseType, couponCode);
   success(res, result, result.alreadyOwned ? 'Already unlocked' : 'Book unlocked successfully');
 });
 

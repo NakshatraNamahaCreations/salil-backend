@@ -279,23 +279,56 @@ const verifyAppleCoinPurchase = async (userId, { packId, productId, jws }) => {
  * chapter reading, PDF streaming, purchase-status, /purchases — works unchanged.
  * The coin cost is derived server-side from the book price (1 coin = ₹1).
  */
-const unlockBookWithCoins = async (userId, bookId, purchaseType = 'ebook') => {
+const unlockBookWithCoins = async (userId, bookId, purchaseType = 'ebook', couponCode = '') => {
   const Book = require('../books/Book.model');
   const BookPurchase = require('../payments/BookPurchase.model');
+  const Coupon = require('../coupons/Coupon.model');
 
   const book = await Book.findById(bookId).lean().catch(() => null);
   if (!book) throw AppError.notFound('Book not found');
   if (book.isFree) throw AppError.badRequest('This content is free, no unlock needed');
 
-  const coinCost =
+  const originalCost =
     (purchaseType === 'audiobook' ? book.audiobookPrice : book.ebookPrice) || 0;
-  if (!coinCost || coinCost <= 0) throw AppError.badRequest('Coin price is not set for this content');
+  if (!originalCost || originalCost <= 0) throw AppError.badRequest('Coin price is not set for this content');
+
+  // Coupons discount the coin cost (1 coin = ₹1). This stays within Apple's
+  // rules on iOS because the coins themselves were bought via Apple IAP — the
+  // coupon never routes payment outside the App Store. Same eligibility rules
+  // as the Razorpay flow in bookPurchase.controller.js.
+  let coinCost = originalCost;
+  let appliedCoupon = null;
+  if (couponCode) {
+    const coupon = await Coupon.findOne({ code: String(couponCode).toUpperCase().trim() });
+    if (coupon && coupon.isActive) {
+      const now = new Date();
+      const validDate = (!coupon.validFrom || now >= new Date(coupon.validFrom)) &&
+                        (!coupon.validUntil || now <= new Date(coupon.validUntil));
+      const withinLimit = coupon.usageLimit === 0 || coupon.usedCount < coupon.usageLimit;
+      const meetsMin = coupon.minPurchaseAmount === 0 || originalCost >= coupon.minPurchaseAmount;
+      const appliesToType = coupon.applicableTo === 'all' || coupon.applicableTo === purchaseType;
+      if (validDate && withinLimit && meetsMin && appliesToType) {
+        let discount = coupon.discountType === 'percentage'
+          ? (originalCost * coupon.discountValue) / 100
+          : coupon.discountValue;
+        if (coupon.discountType === 'percentage' && coupon.maxDiscountAmount > 0) {
+          discount = Math.min(discount, coupon.maxDiscountAmount);
+        }
+        coinCost = Math.max(0, Math.round(originalCost - discount));
+        appliedCoupon = coupon;
+      }
+    }
+  }
 
   // Already owned (via any gateway)?
   const existing = await BookPurchase.findOne({
     userId, bookId, purchaseType, status: 'completed',
   }).lean();
   if (existing) return { alreadyOwned: true };
+
+  // Ensure the wallet exists (a 100%-off coupon must work for a user who has
+  // never bought coins).
+  await getWallet(userId);
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -308,20 +341,28 @@ const unlockBookWithCoins = async (userId, bookId, purchaseType = 'ebook') => {
       );
     }
 
-    wallet.availableCoins -= coinCost;
-    wallet.usedCoins += coinCost;
-    await wallet.save({ session });
+    // A 100%-off coupon leaves nothing to debit — WalletTransaction requires
+    // coins >= 1, so skip the debit entirely for a free unlock.
+    let gatewayPaymentId;
+    if (coinCost > 0) {
+      wallet.availableCoins -= coinCost;
+      wallet.usedCoins += coinCost;
+      await wallet.save({ session });
 
-    const walletTxn = await WalletTransaction.create([{
-      userId,
-      type: 'debit',
-      source: 'unlock',
-      coins: coinCost,
-      balanceAfter: wallet.availableCoins,
-      referenceType: 'book',
-      referenceId: bookId,
-      notes: `Unlocked ${purchaseType}: ${book.title}`,
-    }], { session });
+      const walletTxn = await WalletTransaction.create([{
+        userId,
+        type: 'debit',
+        source: 'unlock',
+        coins: coinCost,
+        balanceAfter: wallet.availableCoins,
+        referenceType: 'book',
+        referenceId: bookId,
+        notes: `Unlocked ${purchaseType}: ${book.title}${appliedCoupon ? ` (coupon ${appliedCoupon.code})` : ''}`,
+      }], { session });
+      gatewayPaymentId = walletTxn[0]._id.toString();
+    } else {
+      gatewayPaymentId = `coupon:${appliedCoupon ? appliedCoupon.code : 'free'}:${new mongoose.Types.ObjectId().toString()}`;
+    }
 
     const purchase = await BookPurchase.create([{
       userId,
@@ -330,12 +371,21 @@ const unlockBookWithCoins = async (userId, bookId, purchaseType = 'ebook') => {
       status: 'completed',
       gateway: 'coins',
       amountPaid: coinCost,
-      originalAmount: coinCost,
+      originalAmount: originalCost,
+      discountAmount: originalCost - coinCost,
+      couponCode: appliedCoupon ? appliedCoupon.code : '',
       currency: 'COINS',
-      gatewayPaymentId: walletTxn[0]._id.toString(),
+      gatewayPaymentId,
     }], { session });
 
     await session.commitTransaction();
+
+    // Consume the coupon only after a successful unlock (mirrors the Razorpay
+    // flow, which increments on payment verification).
+    if (appliedCoupon) {
+      await Coupon.updateOne({ _id: appliedCoupon._id }, { $inc: { usedCount: 1 } }).catch(() => {});
+    }
+
     return { alreadyOwned: false, wallet, purchase: purchase[0] };
   } catch (error) {
     if (session.inTransaction()) await session.abortTransaction();
